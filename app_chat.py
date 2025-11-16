@@ -518,7 +518,7 @@ Original full prompt context (for reference):
         if ai_provider in ["OLLAMA", "OPENAI"]:
             actual_model_used = ai_model_from_request or OPENAI_MODEL_NAME
             openai_url_from_request = data.get('openai_server_url', OPENAI_SERVER_URL)
-            openai_api_key_from_request = data.get('openai_api_key', OPENAI_API_KEY)
+            openai_api_key_from_request = data.get('openai_api_key') or OPENAI_API_KEY
             ai_response_message += f"Processing with {ai_provider} model: {actual_model_used} (at {openai_url_from_request}).\n"
             raw_sql_from_ai_this_attempt = get_openai_playlist_name(openai_url_from_request, actual_model_used, openai_api_key_from_request, current_prompt_for_ai)
             if raw_sql_from_ai_this_attempt.startswith("Error:") or raw_sql_from_ai_this_attempt.startswith("An unexpected error occurred:"):
