@@ -30,7 +30,7 @@ If your feedback is related to an Analysis or Clustering task, please share the 
     *   `NUM_CLUSTERS_MIN / MAX`:
     *   `CLUSTERING_RUNS`:
     *   `SCORE_WEIGHT_DIVERSITY` / `SCORE_WEIGHT_PURITY`:
-    *   `AI_MODEL_PROVIDER`: (e.g., NONE, OLLAMA, GEMINI)
+    *   `AI_MODEL_PROVIDER`: (e.g., NONE, OLLAMA, OPENAI, GEMINI)
     *   Any other configuration used for clustering.
 
 

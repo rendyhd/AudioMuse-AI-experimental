@@ -14,13 +14,13 @@ logger = logging.getLogger(__name__)
 # Import AI configuration from the main config.py
 # This assumes config.py is in the same directory as app_chat.py or accessible via Python path.
 from config import (
-    OLLAMA_SERVER_URL, OLLAMA_MODEL_NAME,
+    OPENAI_SERVER_URL, OPENAI_MODEL_NAME, OPENAI_API_KEY,
     GEMINI_MODEL_NAME, GEMINI_API_KEY, # Import GEMINI_API_KEY from config
     MISTRAL_MODEL_NAME, MISTRAL_API_KEY,
     AI_MODEL_PROVIDER, # Default AI provider
     AI_CHAT_DB_USER_NAME, AI_CHAT_DB_USER_PASSWORD, # Import new config
 )
-from ai import get_gemini_playlist_name, get_ollama_playlist_name, get_mistral_playlist_name # Import functions to call AI
+from ai import get_gemini_playlist_name, get_openai_playlist_name, get_mistral_playlist_name # Import functions to call AI
 
 # Create a Blueprint for chat-related routes
 chat_bp = Blueprint('chat_bp', __name__,
@@ -205,8 +205,8 @@ def chat_config_defaults_api():
     # The default_gemini_api_key is no longer sent to the front end for security.
     return jsonify({
         "default_ai_provider": AI_MODEL_PROVIDER,
-        "default_ollama_model_name": OLLAMA_MODEL_NAME,
-        "ollama_server_url": OLLAMA_SERVER_URL, # Ollama server URL might be useful for display/info
+        "default_openai_model_name": OPENAI_MODEL_NAME,
+        "openai_server_url": OPENAI_SERVER_URL, # OpenAI server URL might be useful for display/info
         "default_gemini_model_name": GEMINI_MODEL_NAME,
         "default_mistral_model_name": MISTRAL_MODEL_NAME,
     }), 200
@@ -515,13 +515,14 @@ Original full prompt context (for reference):
 
         raw_sql_from_ai_this_attempt = None
         # --- Call AI (Ollama/Gemini/Mistral) ---
-        if ai_provider == "OLLAMA":
-            actual_model_used = ai_model_from_request or OLLAMA_MODEL_NAME
-            ollama_url_from_request = data.get('ollama_server_url', OLLAMA_SERVER_URL)
-            ai_response_message += f"Processing with OLLAMA model: {actual_model_used} (at {ollama_url_from_request}).\n"
-            raw_sql_from_ai_this_attempt = get_ollama_playlist_name(ollama_url_from_request, actual_model_used, current_prompt_for_ai)
+        if ai_provider in ["OLLAMA", "OPENAI"]:
+            actual_model_used = ai_model_from_request or OPENAI_MODEL_NAME
+            openai_url_from_request = data.get('openai_server_url', OPENAI_SERVER_URL)
+            openai_api_key_from_request = data.get('openai_api_key', OPENAI_API_KEY)
+            ai_response_message += f"Processing with {ai_provider} model: {actual_model_used} (at {openai_url_from_request}).\n"
+            raw_sql_from_ai_this_attempt = get_openai_playlist_name(openai_url_from_request, actual_model_used, openai_api_key_from_request, current_prompt_for_ai)
             if raw_sql_from_ai_this_attempt.startswith("Error:") or raw_sql_from_ai_this_attempt.startswith("An unexpected error occurred:"):
-                ai_response_message += f"Ollama API Error: {raw_sql_from_ai_this_attempt}\n"
+                ai_response_message += f"{ai_provider} API Error: {raw_sql_from_ai_this_attempt}\n"
                 last_error_for_retry = raw_sql_from_ai_this_attempt # Store error
                 raw_sql_from_ai_this_attempt = None # Mark as failed AI call
 

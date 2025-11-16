@@ -121,7 +121,7 @@ Additional DB & deployment knobs (explicit)
 * `AI_CHAT_DB_USER_NAME`, `AI_CHAT_DB_USER_PASSWORD` — Optional credentials for a restricted, read-only database role used when executing AI-generated SQL from the Instant Playlist (Chat) feature. The application creates/uses a low-privilege role to run SELECT-only queries when the chat flow is enabled; document these values in the Instant Playlist section as well.
 
 - AI & provider settings:
-   * `AI_MODEL_PROVIDER`, `OLLAMA_SERVER_URL`, `OLLAMA_MODEL_NAME`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `MISTRAL_API_KEY`, `MISTRAL_MODEL_NAME` — control how AI naming/chat is performed.
+   * `AI_MODEL_PROVIDER`, `OPENAI_SERVER_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL_NAME`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `MISTRAL_API_KEY`, `MISTRAL_MODEL_NAME` — control how AI naming/chat is performed.
 
 - Safety & result caps:
    * `ALCHEMY_MAX_N_RESULTS`, `ALCHEMY_DEFAULT_N_RESULTS`, `CLEANING_SAFETY_LIMIT`, `MAX_SONGS_PER_ARTIST` — enforce limits on returned/affected rows.
@@ -538,8 +538,8 @@ The Song Clustering functionality is configured by the following environment var
 
 #### **AI Playlist Naming**
 
-* AI\_MODEL\_PROVIDER: Default AI provider (OLLAMA, GEMINI, MISTRAL, NONE).  
-* OLLAMA\_SERVER\_URL, OLLAMA\_MODEL\_NAME: Configuration for Ollama.  
+* AI\_MODEL\_PROVIDER: Default AI provider (OLLAMA, OPENAI, GEMINI, MISTRAL, NONE).
+* OPENAI\_SERVER\_URL, OPENAI\_API\_KEY, OPENAI\_MODEL\_NAME: Configuration for OpenAI compatible APIs.
 * GEMINI\_API\_KEY, GEMINI\_MODEL\_NAME: Configuration for Google Gemini.  
 * MISTRAL\_API\_KEY, MISTRAL\_MODEL\_NAME: Configuration for Mistral.
 
@@ -1130,9 +1130,10 @@ Core / Shared
 
 AI / Chat Specific
 
-* `AI_MODEL_PROVIDER` — Default chat AI provider (OLLAMA, GEMINI, MISTRAL, NONE).
-* `OLLAMA_SERVER_URL` — Default Ollama server (e.g., `http://localhost:11434/api/generate`) used when provider is OLLAMA. The frontend may supply an override `ollama_server_url` per-request.
-* `OLLAMA_MODEL_NAME` — Default Ollama model name for playlist-related prompts.
+* `AI_MODEL_PROVIDER` — Default chat AI provider (OLLAMA, OPENAI, GEMINI, MISTRAL, NONE).
+* `OPENAI_SERVER_URL` — Default OpenAI compatible server (e.g., `http://localhost:11434/v1/chat/completions`) used when provider is OLLAMA or OPENAI. The frontend may supply an override `openai_server_url` per-request.
+* `OPENAI_API_KEY` — Default OpenAI compatible API key.
+* `OPENAI_MODEL_NAME` — Default OpenAI compatible model name for playlist-related prompts.
 * `GEMINI_API_KEY` — Server-side Google Gemini key used for GEMINI provider.
 * `GEMINI_MODEL_NAME` — Default Gemini model (e.g., `gemini-2.5-pro`).
 * `GEMINI_API_CALL_DELAY_SECONDS` — Optional delay to respect Gemini rate limits (used by `ai.py`).
@@ -1308,7 +1309,7 @@ Analysis & Clustering Defaults (used when enqueueing cron jobs)
 * `CLUSTER_ALGORITHM`, `NUM_CLUSTERS_MIN`, `NUM_CLUSTERS_MAX`, `DBSCAN_EPS_MIN`, `DBSCAN_EPS_MAX`, `DBSCAN_MIN_SAMPLES_MIN`, `DBSCAN_MIN_SAMPLES_MAX`, `GMM_N_COMPONENTS_MIN`, `GMM_N_COMPONENTS_MAX`, `SPECTRAL_N_CLUSTERS_MIN`, `SPECTRAL_N_CLUSTERS_MAX`, `PCA_COMPONENTS_MIN`, `PCA_COMPONENTS_MAX` — Default ranges used to compose clustering kwargs.
 * `CLUSTERING_RUNS`, `MAX_SONGS_PER_CLUSTER`, `TOP_N_PLAYLISTS`, `MIN_SONGS_PER_GENRE_FOR_STRATIFICATION`, `STRATIFIED_SAMPLING_TARGET_PERCENTILE` — High-level clustering behavior used when cron enqueues clustering.
 * `SCORE_WEIGHT_*` and other scoring weights — Defaults applied to scheduled clustering runs.
-* `AI_MODEL_PROVIDER`, `OLLAMA_SERVER_URL`, `OLLAMA_MODEL_NAME`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `MISTRAL_API_KEY`, `MISTRAL_MODEL_NAME` — AI naming defaults applied when scheduled clustering requests automatic playlist naming.
+* `AI_MODEL_PROVIDER`, `OPENAI_SERVER_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL_NAME`, `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`, `MISTRAL_API_KEY`, `MISTRAL_MODEL_NAME` — AI naming defaults applied when scheduled clustering requests automatic playlist naming.
 
 Operational Notes
 

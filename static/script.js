@@ -155,8 +155,8 @@ function renderConfig(config) {
 
     // AI Naming
     aiModelProviderSelect.value = config.ai_model_provider || 'NONE';
-    document.getElementById('config-ollama_server_url').value = config.ollama_server_url || 'http://127.0.0.1:11434/api/generate';
-    document.getElementById('config-ollama_model_name').value = config.ollama_model_name || 'mistral:7b';
+    document.getElementById('config-openai_server_url').value = config.openai_server_url || 'http://127.0.0.1:11434/v1/chat/completions';
+    document.getElementById('config-openai_model_name').value = config.openai_model_name || 'mistral:7b';
     document.getElementById('config-gemini_model_name').value = config.gemini_model_name || 'gemini-2.5-pro';
     document.getElementById('config-mistral_model_name').value = config.mistral_model_name || 'ministral-3b-latest';
 }
@@ -384,8 +384,9 @@ async function startTask(taskType) {
             spectral_n_clusters_min: parseInt(document.getElementById('config-spectral_n_clusters_min').value),
             spectral_n_clusters_max: parseInt(document.getElementById('config-spectral_n_clusters_max').value),
             ai_model_provider: aiModelProviderSelect.value,
-            ollama_server_url: document.getElementById('config-ollama_server_url').value,
-            ollama_model_name: document.getElementById('config-ollama_model_name').value,
+            openai_server_url: document.getElementById('config-openai_server_url').value,
+            openai_model_name: document.getElementById('config-openai_model_name').value,
+            openai_api_key: document.getElementById('config-openai_api_key').value,
             gemini_model_name: document.getElementById('config-gemini_model_name').value,
             mistral_model_name: document.getElementById('config-mistral_model_name').value,
             enable_clustering_embeddings: document.getElementById('config-enable_clustering_embeddings').checked
