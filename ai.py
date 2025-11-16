@@ -41,71 +41,52 @@ def clean_playlist_name(name):
     return cleaned_name
 
 
-# --- Ollama Specific Function ---
-def get_ollama_playlist_name(ollama_url, model_name, full_prompt):
+# --- OpenAI Compatible Function (for Ollama, OpenRouter, etc.) ---
+def get_openai_playlist_name(server_url, model_name, api_key, full_prompt):
     """
-    Calls a self-hosted Ollama instance to get a playlist name.
-    This version handles streaming responses and extracts only the non-think part.
+    Calls an OpenAI-compatible API to get a playlist name.
 
     Args:
-        ollama_url (str): The URL of your Ollama instance (e.g., "http://192.168.3.15:11434/api/generate").
-        model_name (str): The Ollama model to use (e.g., "deepseek-r1:1.5b").
+        server_url (str): The URL of the OpenAI-compatible API endpoint.
+        model_name (str): The model to use.
+        api_key (str): The API key for authentication.
         full_prompt (str): The complete prompt text to send to the model.
     Returns:
         str: The extracted playlist name from the model's response, or an error message.
     """
-    # Ollama API endpoint is usually just the base URL + /api/generate
-    options = {
-        "num_predict": 5000, # Max tokens to generate
-        "temperature": 0.9
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
     }
 
     payload = {
         "model": model_name,
-        "prompt": full_prompt,
-        "stream": True, # We handle streaming to get the full response
-        "options": options
-    }
-
-    headers = {
-        "Content-Type": "application/json"
+        "messages": [
+            {"role": "user", "content": full_prompt}
+        ],
+        "temperature": 0.9,
+        "max_tokens": 50,
     }
 
     try:
-        logger.debug("Starting API call for model '%s' at '%s'.", model_name, ollama_url)
+        logger.debug("Starting API call for model '%s' at '%s'.", model_name, server_url)
+        response = requests.post(server_url, headers=headers, data=json.dumps(payload), timeout=960)
+        response.raise_for_status()
 
-        response = requests.post(ollama_url, headers=headers, data=json.dumps(payload), stream=True, timeout=960) # Increased timeout
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-        full_raw_response_content = ""
-        for line in response.iter_lines():
-            if line:
-                try:
-                    chunk = json.loads(line)
-                    if 'response' in chunk:
-                        full_raw_response_content += chunk['response']
-                    if chunk.get('done'):
-                        break # Stop processing when the 'done' signal is received
-                except json.JSONDecodeError:
-                    logger.warning("Could not decode JSON line from stream: %s", line.decode('utf-8', errors='ignore'))
-                    continue
+        response_data = response.json()
 
-        # Ollama models often include thought blocks, extract text after common thought tags
-        # Using a simple approach: find the last occurrence of common thought block enders
-        thought_enders = ["</think>", "[/INST]", "[/THOUGHT]"] # Add other common patterns if needed
-        extracted_text = full_raw_response_content.strip()
-        for end_tag in thought_enders:
-             if end_tag in extracted_text:
-                 extracted_text = extracted_text.split(end_tag, 1)[-1].strip() # Take everything after the last tag
-        # The final cleaning and length check is done in the general function
-        return extracted_text
+        if response_data.get("choices") and response_data["choices"][0].get("message"):
+            extracted_text = response_data["choices"][0]["message"].get("content", "").strip()
+            return extracted_text
+        else:
+            logger.error("Invalid response format from OpenAI API: %s", response_data)
+            return "Error: Invalid response from AI service."
 
     except requests.exceptions.RequestException as e:
-        # Catch network-related errors, bad HTTP responses, etc.
-        logger.error("Error calling Ollama API: %s", e, exc_info=True)
+        logger.error("Error calling OpenAI API: %s", e, exc_info=True)
         return "Error: AI service is currently unavailable."
     except Exception as e:
-        # Catch any other unexpected errors.
-        logger.error("An unexpected error occurred in get_ollama_playlist_name", exc_info=True)
+        logger.error("An unexpected error occurred in get_openai_playlist_name", exc_info=True)
         return "Error: AI service is currently unavailable."
 
 # --- Gemini Specific Function ---
@@ -205,7 +186,7 @@ def get_mistral_playlist_name(mistral_api_key, model_name, full_prompt):
         return "Error: AI service is currently unavailable."
 
 # --- General AI Naming Function ---
-def get_ai_playlist_name(provider, ollama_url, ollama_model_name, gemini_api_key, gemini_model_name, mistral_api_key, mistral_model_name, prompt_template, feature1, feature2, feature3, song_list, other_feature_scores_dict):
+def get_ai_playlist_name(provider, openai_server_url, openai_model_name, openai_api_key, gemini_api_key, gemini_model_name, mistral_api_key, mistral_model_name, prompt_template, feature1, feature2, feature3, song_list, other_feature_scores_dict):
     """
     Selects and calls the appropriate AI model based on the provider.
     Constructs the full prompt including new features.
@@ -256,8 +237,8 @@ def get_ai_playlist_name(provider, ollama_url, ollama_model_name, gemini_api_key
     # --- Call the AI Model ---
     name = "AI Naming Skipped" # Default if provider is NONE or invalid
 
-    if provider == "OLLAMA":
-        name = get_ollama_playlist_name(ollama_url, ollama_model_name, full_prompt)
+    if provider in ["OLLAMA", "OPENAI"]:
+        name = get_openai_playlist_name(openai_server_url, openai_model_name, openai_api_key, full_prompt)
     elif provider == "GEMINI":
         name = get_gemini_playlist_name(gemini_api_key, gemini_model_name, full_prompt)
     elif provider == "MISTRAL":
