@@ -1,6 +1,8 @@
 # /home/guido/Music/AudioMuse-AI/rq_worker.py
 import os
 import sys
+import atexit
+import signal
 
 # Ensure the /app directory (where app.py and tasks.py are) is in the Python path
 # This is important if rq_worker.py is in the root and app.py/tasks.py are in /app
@@ -56,6 +58,31 @@ if __name__ == '__main__':
     # Common levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
     logging_level = os.getenv("RQ_LOGGING_LEVEL", "INFO").upper()
     print(f"RQ Worker logging level set to: {logging_level}")
+
+    # --- Graceful Shutdown Handlers ---
+    # Cleanup persistent CPU pool on shutdown to prevent resource leaks
+    def graceful_shutdown_handler(signum, frame):
+        """Handle SIGTERM/SIGINT by cleaning up persistent resources."""
+        print(f"Received signal {signum}, initiating graceful shutdown...")
+        try:
+            from tasks.analysis import shutdown_worker_cpu_pool
+            shutdown_worker_cpu_pool()
+        except Exception as e:
+            print(f"Error during pool shutdown: {e}")
+        sys.exit(0)
+
+    def cleanup_on_exit():
+        """Cleanup on normal exit."""
+        try:
+            from tasks.analysis import shutdown_worker_cpu_pool
+            shutdown_worker_cpu_pool()
+        except Exception:
+            pass
+
+    # Register signal handlers (SIGTERM for Docker/k8s, SIGINT for Ctrl+C)
+    signal.signal(signal.SIGTERM, graceful_shutdown_handler)
+    signal.signal(signal.SIGINT, graceful_shutdown_handler)
+    atexit.register(cleanup_on_exit)
 
     try:
         # The `with app.app_context():` here is generally NOT how RQ workers are run.

@@ -47,6 +47,23 @@ services:
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
       TEMP_DIR: "/app/temp_audio"
+      MUSIC_LIBRARIES: "${MUSIC_LIBRARIES:-}"
+      # Multi-Server Playlist Sync
+      PLAYLIST_PRIMARY_SERVER: "${PLAYLIST_PRIMARY_SERVER:-}"
+      PLAYLIST_SECONDARY_SERVERS: "${PLAYLIST_SECONDARY_SERVERS:-}"
+      PLAYLIST_SYNC_ENABLED: "${PLAYLIST_SYNC_ENABLED:-true}"
+      # Secondary server credentials (for sync)
+      JELLYFIN_URL: "${JELLYFIN_URL:-}"
+      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID:-}"
+      JELLYFIN_TOKEN: "${JELLYFIN_TOKEN:-}"
+      PLEX_URL: "${PLEX_URL:-}"
+      PLEX_TOKEN: "${PLEX_TOKEN:-}"
+      EMBY_URL: "${EMBY_URL:-}"
+      EMBY_USER_ID: "${EMBY_USER_ID:-}"
+      EMBY_TOKEN: "${EMBY_TOKEN:-}"
+      NAVIDROME_URL: "${NAVIDROME_URL:-}"
+      NAVIDROME_USER: "${NAVIDROME_USER:-}"
+      NAVIDROME_PASSWORD: "${NAVIDROME_PASSWORD:-}"
     volumes:
       - temp-audio-flask:/app/temp_audio
     depends_on:
@@ -75,6 +92,23 @@ services:
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
       TEMP_DIR: "/app/temp_audio"
+      MUSIC_LIBRARIES: "${MUSIC_LIBRARIES:-}"
+      # Multi-Server Playlist Sync
+      PLAYLIST_PRIMARY_SERVER: "${PLAYLIST_PRIMARY_SERVER:-}"
+      PLAYLIST_SECONDARY_SERVERS: "${PLAYLIST_SECONDARY_SERVERS:-}"
+      PLAYLIST_SYNC_ENABLED: "${PLAYLIST_SYNC_ENABLED:-true}"
+      # Secondary server credentials (for sync)
+      JELLYFIN_URL: "${JELLYFIN_URL:-}"
+      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID:-}"
+      JELLYFIN_TOKEN: "${JELLYFIN_TOKEN:-}"
+      PLEX_URL: "${PLEX_URL:-}"
+      PLEX_TOKEN: "${PLEX_TOKEN:-}"
+      EMBY_URL: "${EMBY_URL:-}"
+      EMBY_USER_ID: "${EMBY_USER_ID:-}"
+      EMBY_TOKEN: "${EMBY_TOKEN:-}"
+      NAVIDROME_URL: "${NAVIDROME_URL:-}"
+      NAVIDROME_USER: "${NAVIDROME_USER:-}"
+      NAVIDROME_PASSWORD: "${NAVIDROME_PASSWORD:-}"
     volumes:
       - temp-audio-worker:/app/temp_audio
     depends_on:

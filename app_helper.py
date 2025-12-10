@@ -119,6 +119,34 @@ def init_db():
         cur.execute("CREATE TABLE IF NOT EXISTS cron (id SERIAL PRIMARY KEY, name TEXT, task_type TEXT NOT NULL, cron_expr TEXT NOT NULL, enabled BOOLEAN DEFAULT FALSE, last_run DOUBLE PRECISION, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         # Create 'artist_mapping' table to map artist names to media server artist IDs
         cur.execute("CREATE TABLE IF NOT EXISTS artist_mapping (artist_name TEXT PRIMARY KEY, artist_id TEXT)")
+        # Create 'track_server_mapping' table for multi-server playlist sync
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS track_server_mapping (
+                file_path TEXT PRIMARY KEY,
+                plex_id TEXT,
+                jellyfin_id TEXT,
+                emby_id TEXT,
+                navidrome_id TEXT,
+                lyrion_id TEXT,
+                mpd_id TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Add 'rating' column if not exists (user rating from media server, 0-5 scale)
+        cur.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'score' AND column_name = 'rating')")
+        if not cur.fetchone()[0]:
+            logger.info("Adding 'rating' column to 'score' table.")
+            cur.execute("ALTER TABLE score ADD COLUMN rating REAL")
+        # Add 'rating_source' column if not exists (e.g., 'plex', 'jellyfin')
+        cur.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'score' AND column_name = 'rating_source')")
+        if not cur.fetchone()[0]:
+            logger.info("Adding 'rating_source' column to 'score' table.")
+            cur.execute("ALTER TABLE score ADD COLUMN rating_source TEXT")
+        # Add 'rating_synced_at' column if not exists
+        cur.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'score' AND column_name = 'rating_synced_at')")
+        if not cur.fetchone()[0]:
+            logger.info("Adding 'rating_synced_at' column to 'score' table.")
+            cur.execute("ALTER TABLE score ADD COLUMN rating_synced_at TIMESTAMP")
         db.commit()
 
 # --- Status Constants ---
@@ -303,7 +331,7 @@ def track_exists(item_id):
     Returns False otherwise, indicating a re-analysis is needed.
     """
     conn = get_db() # This now calls the function within this file
-def save_track_analysis_and_embedding(item_id, title, author, tempo, key, scale, moods, embedding_vector, energy=None, other_features=None, album=None, song_artist=None, album_artist=None):
+def save_track_analysis_and_embedding(item_id, title, author, tempo, key, scale, moods, embedding_vector, energy=None, other_features=None, album=None, song_artist=None, album_artist=None, rating=None, rating_source=None):
     """Saves track analysis and embedding in a single transaction."""
     # Sanitize string inputs to remove NUL characters
     title = title.replace('\x00', '') if title else title
@@ -314,16 +342,17 @@ def save_track_analysis_and_embedding(item_id, title, author, tempo, key, scale,
     album = album.replace('\x00', '') if album else album
     song_artist = song_artist.replace('\x00', '') if song_artist else song_artist
     album_artist = album_artist.replace('\x00', '') if album_artist else album_artist
+    rating_source = rating_source.replace('\x00', '') if rating_source else rating_source
 
     mood_str = ','.join(f"{k}:{v:.3f}" for k, v in moods.items())
-    
+
     conn = get_db() # This now calls the function within this file
     cur = conn.cursor()
     try:
-        # Save analysis to score table
+        # Save analysis to score table (including rating if provided)
         cur.execute("""
-            INSERT INTO score (item_id, title, author, tempo, key, scale, mood_vector, energy, other_features, album, song_artist, album_artist)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO score (item_id, title, author, tempo, key, scale, mood_vector, energy, other_features, album, song_artist, album_artist, rating, rating_source, rating_synced_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s IS NOT NULL THEN NOW() ELSE NULL END)
             ON CONFLICT (item_id) DO UPDATE SET
                 title = EXCLUDED.title,
                 author = EXCLUDED.author,
@@ -335,8 +364,11 @@ def save_track_analysis_and_embedding(item_id, title, author, tempo, key, scale,
                 other_features = EXCLUDED.other_features,
                 album = EXCLUDED.album,
                 song_artist = EXCLUDED.song_artist,
-                album_artist = EXCLUDED.album_artist
-        """, (item_id, title, author, tempo, key, scale, mood_str, energy, other_features, album, song_artist, album_artist))
+                album_artist = EXCLUDED.album_artist,
+                rating = COALESCE(EXCLUDED.rating, score.rating),
+                rating_source = COALESCE(EXCLUDED.rating_source, score.rating_source),
+                rating_synced_at = CASE WHEN EXCLUDED.rating IS NOT NULL THEN NOW() ELSE score.rating_synced_at END
+        """, (item_id, title, author, tempo, key, scale, mood_str, energy, other_features, album, song_artist, album_artist, rating, rating_source, rating))
 
         # Save embedding
         if isinstance(embedding_vector, np.ndarray) and embedding_vector.size > 0:
@@ -353,6 +385,101 @@ def save_track_analysis_and_embedding(item_id, title, author, tempo, key, scale,
         raise
     finally:
         cur.close()
+
+
+def save_track_analysis_and_embedding_batch(tracks_data: list):
+    """
+    Batch saves multiple track analyses and embeddings in a single transaction.
+    This is more efficient than calling save_track_analysis_and_embedding() individually.
+
+    Args:
+        tracks_data: List of dicts, each containing:
+            - item_id, title, author, tempo, key, scale, moods (dict), embedding_vector (np.ndarray)
+            - Optional: energy, other_features, album, song_artist, album_artist, rating, rating_source
+    """
+    if not tracks_data:
+        return
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    def sanitize(val):
+        """Remove NUL characters from strings."""
+        return val.replace('\x00', '') if val else val
+
+    try:
+        score_data = []
+        embedding_data = []
+
+        for track in tracks_data:
+            item_id = track['item_id']
+            title = sanitize(track.get('title', ''))
+            author = sanitize(track.get('author', ''))
+            tempo = track.get('tempo')
+            key = sanitize(track.get('key', ''))
+            scale = sanitize(track.get('scale', ''))
+            moods = track.get('moods', {})
+            energy = track.get('energy')
+            other_features = sanitize(track.get('other_features', ''))
+            album = sanitize(track.get('album', ''))
+            song_artist = sanitize(track.get('song_artist', ''))
+            album_artist = sanitize(track.get('album_artist', ''))
+            rating = track.get('rating')
+            rating_source = sanitize(track.get('rating_source', ''))
+            embedding_vector = track.get('embedding_vector')
+
+            mood_str = ','.join(f"{k}:{v:.3f}" for k, v in moods.items()) if moods else ''
+
+            score_data.append((
+                item_id, title, author, tempo, key, scale, mood_str,
+                energy, other_features, album, song_artist, album_artist,
+                rating, rating_source, rating  # last rating is for the CASE check
+            ))
+
+            if isinstance(embedding_vector, np.ndarray) and embedding_vector.size > 0:
+                embedding_blob = embedding_vector.astype(np.float32).tobytes()
+                embedding_data.append((item_id, psycopg2.Binary(embedding_blob)))
+
+        # Batch insert scores
+        if score_data:
+            from psycopg2.extras import execute_batch
+            execute_batch(cur, """
+                INSERT INTO score (item_id, title, author, tempo, key, scale, mood_vector, energy, other_features, album, song_artist, album_artist, rating, rating_source, rating_synced_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s IS NOT NULL THEN NOW() ELSE NULL END)
+                ON CONFLICT (item_id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    author = EXCLUDED.author,
+                    tempo = EXCLUDED.tempo,
+                    key = EXCLUDED.key,
+                    scale = EXCLUDED.scale,
+                    mood_vector = EXCLUDED.mood_vector,
+                    energy = EXCLUDED.energy,
+                    other_features = EXCLUDED.other_features,
+                    album = EXCLUDED.album,
+                    song_artist = EXCLUDED.song_artist,
+                    album_artist = EXCLUDED.album_artist,
+                    rating = COALESCE(EXCLUDED.rating, score.rating),
+                    rating_source = COALESCE(EXCLUDED.rating_source, score.rating_source),
+                    rating_synced_at = CASE WHEN EXCLUDED.rating IS NOT NULL THEN NOW() ELSE score.rating_synced_at END
+            """, score_data, page_size=50)
+
+        # Batch insert embeddings
+        if embedding_data:
+            execute_batch(cur, """
+                INSERT INTO embedding (item_id, embedding) VALUES (%s, %s)
+                ON CONFLICT (item_id) DO UPDATE SET embedding = EXCLUDED.embedding
+            """, embedding_data, page_size=50)
+
+        conn.commit()
+        logger.info(f"Batch saved {len(score_data)} tracks and {len(embedding_data)} embeddings.")
+
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error batch saving tracks: {e}")
+        raise
+    finally:
+        cur.close()
+
 
 def get_all_tracks():
     """Fetches all tracks and their embeddings from the database."""
@@ -418,7 +545,7 @@ def get_score_data_by_ids(item_ids_list):
     conn = get_db() # This now calls the function within this file
     cur = conn.cursor(cursor_factory=DictCursor)
     query = """
-        SELECT s.item_id, s.title, s.author, s.tempo, s.key, s.scale, s.mood_vector, s.energy, s.other_features, s.album, s.song_artist, s.album_artist
+        SELECT s.item_id, s.title, s.author, s.tempo, s.key, s.scale, s.mood_vector, s.energy, s.other_features, s.album, s.song_artist, s.album_artist, s.rating, s.rating_source
         FROM score s
         WHERE s.item_id IN %s
     """

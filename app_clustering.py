@@ -226,6 +226,13 @@ def start_clustering_endpoint():
                 type: boolean
                 description: Whether to use embeddings for clustering (True) or score_vector (False).
                 default: true
+              min_rating:
+                type: number
+                format: float
+                description: Minimum rating threshold (0-5 scale). Only tracks with rating >= this value will be included in clustering. Tracks without ratings are excluded when this is specified.
+                minimum: 0
+                maximum: 5
+                nullable: true
     responses:
       202:
         description: Clustering task successfully enqueued.
@@ -334,6 +341,7 @@ def start_clustering_endpoint():
             "mistral_model_name_param": data.get('mistral_model_name', MISTRAL_MODEL_NAME),
             "top_n_moods_for_clustering_param": int(data.get('top_n_moods', TOP_N_MOODS)),
             "enable_clustering_embeddings_param": data.get('enable_clustering_embeddings', ENABLE_CLUSTERING_EMBEDDINGS),
+            "min_rating_param": float(data['min_rating']) if data.get('min_rating') is not None else None,
         },
         job_id=job_id,
         description="Main Music Clustering",

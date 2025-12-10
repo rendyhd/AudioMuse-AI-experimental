@@ -268,8 +268,9 @@ def run_clustering_task(
     gemini_api_key_param, gemini_model_name_param,
     mistral_api_key_param, mistral_model_name_param,
     top_n_moods_for_clustering_param,
-    top_n_playlists_param, # *** NEW: Accept Top N parameter ***
-    enable_clustering_embeddings_param):
+    top_n_playlists_param,
+    enable_clustering_embeddings_param,
+    min_rating_param=None):
     """
     Main entry point for the clustering process.
     Orchestrates data preparation, batch job creation, result aggregation, and playlist creation.
@@ -374,7 +375,15 @@ def run_clustering_task(
             _log_and_update("Fetching lightweight track data for stratification...", 1)
             db = get_db()
             cur = db.cursor(cursor_factory=DictCursor)
-            cur.execute("SELECT item_id, author, mood_vector FROM score WHERE mood_vector IS NOT NULL AND mood_vector != ''")
+            # Apply min_rating filter if specified
+            if min_rating_param is not None:
+                cur.execute(
+                    "SELECT item_id, author, mood_vector FROM score WHERE mood_vector IS NOT NULL AND mood_vector != '' AND rating IS NOT NULL AND rating >= %s",
+                    (min_rating_param,)
+                )
+                logger.info(f"Clustering with min_rating filter: {min_rating_param}")
+            else:
+                cur.execute("SELECT item_id, author, mood_vector FROM score WHERE mood_vector IS NOT NULL AND mood_vector != ''")
             lightweight_rows = cur.fetchall()
             cur.close()
 

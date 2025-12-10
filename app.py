@@ -467,6 +467,7 @@ def get_last_overall_task_status_endpoint():
 def get_active_tasks_endpoint():
     """
     Get the status of the currently active main task, if any.
+    Includes task breakdown (child task statuses) and queue stats.
     """
     db = get_db()
     cur = db.cursor(cursor_factory=DictCursor)
@@ -479,11 +480,11 @@ def get_active_tasks_endpoint():
         LIMIT 1
     """, (non_terminal_statuses,))
     active_main_task_row = cur.fetchone()
-    cur.close()
 
     if active_main_task_row:
         task_item = dict(active_main_task_row)
-        
+        task_id = task_item.get('task_id')
+
         # Calculate running time in Python
         start_time = task_item.get('start_time')
         if start_time:
@@ -520,12 +521,46 @@ def get_active_tasks_endpoint():
             except json.JSONDecodeError:
                 task_item['details'] = {"raw_details": task_item['details'], "error": "Failed to parse details JSON."}
 
+        # Get task breakdown (child task statuses) from database
+        if task_id:
+            cur.execute("""
+                SELECT status, COUNT(*) as count
+                FROM task_status
+                WHERE parent_task_id = %s
+                GROUP BY status
+            """, (task_id,))
+            breakdown_rows = cur.fetchall()
+            breakdown = {row['status']: row['count'] for row in breakdown_rows}
+            task_item['task_breakdown'] = {
+                'completed': breakdown.get(TASK_STATUS_SUCCESS, 0),
+                'in_progress': breakdown.get(TASK_STATUS_PROGRESS, 0) + breakdown.get(TASK_STATUS_STARTED, 0),
+                'failed': breakdown.get(TASK_STATUS_FAILURE, 0),
+                'revoked': breakdown.get(TASK_STATUS_REVOKED, 0),
+                'pending': breakdown.get(TASK_STATUS_PENDING, 0)
+            }
+
+        # Get queue stats from Redis
+        try:
+            queue_length = redis_conn.llen('rq:queue:default')
+            high_queue_length = redis_conn.llen('rq:queue:high')
+            task_item['queue_stats'] = {
+                'queued': queue_length,
+                'high_priority_queued': high_queue_length
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get queue stats from Redis: {e}")
+            task_item['queue_stats'] = {'queued': 0, 'high_priority_queued': 0}
+
+        cur.close()
+
         # Clean up raw time columns before sending response
         task_item.pop('start_time', None)
         task_item.pop('end_time', None)
         task_item.pop('timestamp', None)
 
         return jsonify(task_item), 200
+
+    cur.close()
     return jsonify({}), 200 # Return empty object if no active main task
 
 @app.route('/api/config', methods=['GET'])
@@ -582,6 +617,85 @@ def get_playlists_endpoint():
     for row in rows:
         playlists_data[row['playlist_name']].append({"item_id": row['item_id'], "title": row['title'], "author": row['author']})
     return jsonify(dict(playlists_data)), 200
+
+
+@app.route('/api/sync_ratings', methods=['POST'])
+def sync_ratings_endpoint():
+    """
+    Sync ratings from the media server for all analyzed tracks.
+    This updates only the rating fields without triggering re-analysis.
+    ---
+    tags:
+      - Ratings
+    responses:
+      200:
+        description: Ratings synced successfully.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                updated_count:
+                  type: integer
+                total_tracks:
+                  type: integer
+      500:
+        description: Error syncing ratings.
+    """
+    from config import MEDIASERVER_TYPE
+    from tasks.mediaserver import get_all_songs
+
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=DictCursor)
+
+        # Get all analyzed track IDs from DB
+        cur.execute("SELECT item_id FROM score")
+        db_tracks = {row['item_id'] for row in cur.fetchall()}
+
+        if not db_tracks:
+            return jsonify({"status": "success", "updated_count": 0, "total_tracks": 0, "message": "No analyzed tracks found"}), 200
+
+        # Fetch all songs from media server (includes ratings)
+        logger.info(f"Fetching songs from {MEDIASERVER_TYPE} to sync ratings...")
+        all_songs = get_all_songs()
+
+        # Build a map of track_id -> rating
+        rating_map = {}
+        for song in all_songs:
+            track_id = str(song.get('Id', ''))
+            rating = song.get('Rating')
+            if track_id and rating is not None:
+                rating_map[track_id] = rating
+
+        # Update ratings in DB
+        updated_count = 0
+        for track_id in db_tracks:
+            if track_id in rating_map:
+                cur.execute("""
+                    UPDATE score
+                    SET rating = %s, rating_source = %s, rating_synced_at = NOW()
+                    WHERE item_id = %s AND (rating IS NULL OR rating != %s)
+                """, (rating_map[track_id], MEDIASERVER_TYPE, track_id, rating_map[track_id]))
+                if cur.rowcount > 0:
+                    updated_count += 1
+
+        conn.commit()
+        cur.close()
+
+        logger.info(f"Rating sync complete: {updated_count} tracks updated out of {len(db_tracks)} total")
+        return jsonify({
+            "status": "success",
+            "updated_count": updated_count,
+            "total_tracks": len(db_tracks),
+            "tracks_with_ratings": len(rating_map)
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error syncing ratings: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # --- Redis index reload listener (restored pre-e308673 logic, with map reload added) ---
@@ -661,6 +775,7 @@ from app_map import map_bp
 from app_waveform import waveform_bp
 from app_artist_similarity import artist_similarity_bp
 from app_extend_playlist import extend_playlist_bp
+from app_playlist_sync import playlist_sync_bp
 
 app.register_blueprint(chat_bp, url_prefix='/chat')
 app.register_blueprint(clustering_bp)
@@ -676,6 +791,7 @@ app.register_blueprint(map_bp)
 app.register_blueprint(waveform_bp)
 app.register_blueprint(artist_similarity_bp)
 app.register_blueprint(extend_playlist_bp)
+app.register_blueprint(playlist_sync_bp)
 
 if __name__ == '__main__':
   os.makedirs(TEMP_DIR, exist_ok=True)

@@ -25,6 +25,7 @@ const startAnalysisBtn = document.getElementById('start-analysis-btn');
 const startClusteringBtn = document.getElementById('start-clustering-btn');
 const fetchPlaylistsBtn = document.getElementById('fetch-playlists-btn');
 const cancelTaskBtn = document.getElementById('cancel-task-btn');
+const syncRatingsBtn = document.getElementById('sync-ratings-btn');
 
 // Task Status Display
 const statusTaskId = document.getElementById('status-task-id');
@@ -313,7 +314,8 @@ function displayTaskStatus(task) {
     statusProgress.textContent = task.progress || 0;
     progressBar.style.width = `${task.progress || 0}%`;
 
-    statusStatus.className = 'status-text'; // Reset classes
+    // Reset and apply status badge classes
+    statusStatus.className = 'status-badge';
     let statusClass = 'status-pending';
     if (['SUCCESS', 'FINISHED'].includes(stateUpper)) {
         statusClass = 'status-success';
@@ -321,9 +323,10 @@ function displayTaskStatus(task) {
         statusClass = 'status-failure';
     } else if (stateUpper === 'IDLE') {
         statusClass = 'status-idle';
+    } else if (['PROGRESS', 'STARTED'].includes(stateUpper)) {
+        statusClass = 'status-progress';
     }
-    statusStatus.classList.add('status-status', statusClass);
-
+    statusStatus.classList.add(statusClass);
 
     if (['SUCCESS', 'FINISHED'].includes(stateUpper) && (task.task_type_from_db || task.task_type || '').toLowerCase().includes('clustering')) {
         fetchPlaylists();
@@ -343,6 +346,9 @@ function displayTaskStatus(task) {
         }
     }
     statusLog.textContent = statusMessage;
+
+    // Update task breakdown display
+    updateTaskBreakdown(task);
 
     // FIX: Sanitize and limit details display to prevent memory crashes
     try {
@@ -393,6 +399,72 @@ function displayTaskStatus(task) {
     if (isNearBottom) {
         statusDetails.scrollTop = statusDetails.scrollHeight;
     }
+}
+
+/**
+ * Updates the task breakdown display with counts from task_breakdown and queue_stats.
+ * @param {object} task The task object from the API.
+ */
+function updateTaskBreakdown(task) {
+    const breakdown = {
+        completed: 0,
+        inProgress: 0,
+        queued: 0,
+        skipped: 0,
+        failed: 0
+    };
+
+    // Get counts from task_breakdown (database source of truth)
+    if (task.task_breakdown) {
+        breakdown.completed = task.task_breakdown.completed || 0;
+        breakdown.inProgress = task.task_breakdown.in_progress || 0;
+        breakdown.failed = (task.task_breakdown.failed || 0) + (task.task_breakdown.revoked || 0);
+    }
+
+    // Get queue stats from Redis
+    if (task.queue_stats) {
+        breakdown.queued = task.queue_stats.queued || 0;
+    }
+
+    // Parse skipped from status_message if available
+    if (task.details?.status_message) {
+        const skippedMatch = task.details.status_message.match(/Skipped:\s*(\d+)/);
+        if (skippedMatch) {
+            breakdown.skipped = parseInt(skippedMatch[1]);
+        }
+    } else if (task.details?.albums_skipped !== undefined) {
+        breakdown.skipped = task.details.albums_skipped;
+    }
+
+    // Calculate total for mini-bar proportions
+    const total = Math.max(1,
+        breakdown.completed + breakdown.inProgress + breakdown.queued + breakdown.skipped + breakdown.failed);
+
+    // Update DOM elements
+    const countCompleted = document.getElementById('count-completed');
+    const countInProgress = document.getElementById('count-in-progress');
+    const countQueued = document.getElementById('count-queued');
+    const countSkipped = document.getElementById('count-skipped');
+    const countFailed = document.getElementById('count-failed');
+
+    if (countCompleted) countCompleted.textContent = breakdown.completed;
+    if (countInProgress) countInProgress.textContent = breakdown.inProgress;
+    if (countQueued) countQueued.textContent = breakdown.queued;
+    if (countSkipped) countSkipped.textContent = breakdown.skipped;
+    if (countFailed) countFailed.textContent = breakdown.failed;
+
+    // Update mini-bar widths (percentage of total)
+    const barCompleted = document.getElementById('bar-completed');
+    const barInProgress = document.getElementById('bar-in-progress');
+    const barQueued = document.getElementById('bar-queued');
+    const barSkipped = document.getElementById('bar-skipped');
+    const barFailed = document.getElementById('bar-failed');
+
+    if (barCompleted) barCompleted.style.width = `${(breakdown.completed / total) * 100}%`;
+    if (barInProgress) barInProgress.style.width = `${(breakdown.inProgress / total) * 100}%`;
+    if (barQueued) barQueued.style.width = `${(breakdown.queued / total) * 100}%`;
+    if (barSkipped) barSkipped.style.width = `${(breakdown.skipped / total) * 100}%`;
+    if (barFailed) barFailed.style.width = `${(breakdown.failed / total) * 100}%`;
 }
 
 /**
@@ -586,6 +658,37 @@ async function fetchAndDisplayOverallLastTask() {
     }
 }
 
+/**
+ * Sync ratings from the media server
+ */
+async function syncRatings() {
+    if (!syncRatingsBtn) return;
+
+    const originalText = syncRatingsBtn.textContent;
+    syncRatingsBtn.textContent = 'Syncing...';
+    syncRatingsBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/sync_ratings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`Ratings synced successfully!\n\nUpdated: ${data.updated_count} tracks\nTotal analyzed: ${data.total_tracks}\nTracks with ratings: ${data.tracks_with_ratings}`);
+        } else {
+            alert(`Error syncing ratings: ${data.message || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error syncing ratings:', error);
+        alert('Failed to sync ratings. Check console for details.');
+    } finally {
+        syncRatingsBtn.textContent = originalText;
+        syncRatingsBtn.disabled = false;
+    }
+}
+
 // --- Event Listeners & Initialization ---
 document.addEventListener('DOMContentLoaded', async () => {
     // do work behind a reverse proxy we need to get the URLs resolved set and expect them in the following variables
@@ -603,6 +706,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     startClusteringBtn.addEventListener('click', () => startTask('clustering'));
     fetchPlaylistsBtn.addEventListener('click', () => startTask('fetch_playlists'));
     cancelTaskBtn.addEventListener('click', cancelTask);
+    if (syncRatingsBtn) syncRatingsBtn.addEventListener('click', syncRatings);
 
     // View switcher buttons
     basicViewBtn.addEventListener('click', () => switchView('basic'));

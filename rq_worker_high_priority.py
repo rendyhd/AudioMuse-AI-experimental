@@ -2,6 +2,8 @@
 import os
 import sys
 import logging
+import atexit
+import signal
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -32,6 +34,31 @@ if __name__ == '__main__':
 
     logging_level = os.getenv("RQ_LOGGING_LEVEL", "INFO").upper()
     print(f"RQ Worker logging level set to: {logging_level}")
+
+    # --- Graceful Shutdown Handlers ---
+    # Cleanup persistent CPU pool on shutdown to prevent resource leaks
+    def graceful_shutdown_handler(signum, frame):
+        """Handle SIGTERM/SIGINT by cleaning up persistent resources."""
+        print(f"Received signal {signum}, initiating graceful shutdown...")
+        try:
+            from tasks.analysis import shutdown_worker_cpu_pool
+            shutdown_worker_cpu_pool()
+        except Exception as e:
+            print(f"Error during pool shutdown: {e}")
+        sys.exit(0)
+
+    def cleanup_on_exit():
+        """Cleanup on normal exit."""
+        try:
+            from tasks.analysis import shutdown_worker_cpu_pool
+            shutdown_worker_cpu_pool()
+        except Exception:
+            pass
+
+    # Register signal handlers (SIGTERM for Docker/k8s, SIGINT for Ctrl+C)
+    signal.signal(signal.SIGTERM, graceful_shutdown_handler)
+    signal.signal(signal.SIGINT, graceful_shutdown_handler)
+    atexit.register(cleanup_on_exit)
 
     try:
         # The job function itself is responsible for creating an app context if needed.

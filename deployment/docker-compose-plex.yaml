@@ -32,10 +32,9 @@ services:
       - "8000:8000"
     environment:
       SERVICE_TYPE: "flask"
-      MEDIASERVER_TYPE: "navidrome"
-      NAVIDROME_URL: "${NAVIDROME_URL}"
-      NAVIDROME_USER: "${NAVIDROME_USER}"
-      NAVIDROME_PASSWORD: "${NAVIDROME_PASSWORD}"
+      MEDIASERVER_TYPE: "plex"
+      PLEX_URL: "${PLEX_URL}"
+      PLEX_TOKEN: "${PLEX_TOKEN}"
       POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
       POSTGRES_DB: ${POSTGRES_DB:-audiomusedb}
@@ -58,11 +57,12 @@ services:
       JELLYFIN_URL: "${JELLYFIN_URL:-}"
       JELLYFIN_USER_ID: "${JELLYFIN_USER_ID:-}"
       JELLYFIN_TOKEN: "${JELLYFIN_TOKEN:-}"
-      PLEX_URL: "${PLEX_URL:-}"
-      PLEX_TOKEN: "${PLEX_TOKEN:-}"
       EMBY_URL: "${EMBY_URL:-}"
       EMBY_USER_ID: "${EMBY_USER_ID:-}"
       EMBY_TOKEN: "${EMBY_TOKEN:-}"
+      NAVIDROME_URL: "${NAVIDROME_URL:-}"
+      NAVIDROME_USER: "${NAVIDROME_USER:-}"
+      NAVIDROME_PASSWORD: "${NAVIDROME_PASSWORD:-}"
       LYRION_URL: "${LYRION_URL:-}"
     volumes:
       - temp-audio-flask:/app/temp_audio
@@ -77,10 +77,9 @@ services:
     container_name: audiomuse-ai-worker-instance
     environment:
       SERVICE_TYPE: "worker"
-      MEDIASERVER_TYPE: "navidrome"
-      NAVIDROME_URL: "${NAVIDROME_URL}"
-      NAVIDROME_USER: "${NAVIDROME_USER}"
-      NAVIDROME_PASSWORD: "${NAVIDROME_PASSWORD}"
+      MEDIASERVER_TYPE: "plex"
+      PLEX_URL: "${PLEX_URL}"
+      PLEX_TOKEN: "${PLEX_TOKEN}"
       POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
       POSTGRES_DB: ${POSTGRES_DB:-audiomusedb}
@@ -103,11 +102,12 @@ services:
       JELLYFIN_URL: "${JELLYFIN_URL:-}"
       JELLYFIN_USER_ID: "${JELLYFIN_USER_ID:-}"
       JELLYFIN_TOKEN: "${JELLYFIN_TOKEN:-}"
-      PLEX_URL: "${PLEX_URL:-}"
-      PLEX_TOKEN: "${PLEX_TOKEN:-}"
       EMBY_URL: "${EMBY_URL:-}"
       EMBY_USER_ID: "${EMBY_USER_ID:-}"
       EMBY_TOKEN: "${EMBY_TOKEN:-}"
+      NAVIDROME_URL: "${NAVIDROME_URL:-}"
+      NAVIDROME_USER: "${NAVIDROME_USER:-}"
+      NAVIDROME_PASSWORD: "${NAVIDROME_PASSWORD:-}"
       LYRION_URL: "${LYRION_URL:-}"
     volumes:
       - temp-audio-worker:/app/temp_audio

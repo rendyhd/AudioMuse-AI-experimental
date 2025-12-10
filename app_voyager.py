@@ -127,6 +127,13 @@ def get_similar_tracks_endpoint():
         schema:
           type: string
           enum: ['true', 'false']
+      - name: min_rating
+        in: query
+        description: Minimum rating threshold (0-5 scale). Only tracks with rating >= this value will be returned. Tracks without ratings are excluded when this is specified.
+        schema:
+          type: number
+          minimum: 0
+          maximum: 5
     responses:
       200:
         description: A list of similar tracks with their details.
@@ -176,6 +183,11 @@ def get_similar_tracks_endpoint():
     else:
         mood_similarity = mood_similarity_str.lower() == 'true'
 
+    # Parse min_rating filter (0-5 scale)
+    min_rating = request.args.get('min_rating', type=float)
+    if min_rating is not None:
+        min_rating = max(0.0, min(5.0, min_rating))  # Clamp to valid range
+
     target_item_id = None
 
     if item_id:
@@ -190,11 +202,12 @@ def get_similar_tracks_endpoint():
 
     try:
         neighbor_results = find_nearest_neighbors_by_id(
-            target_item_id, 
+            target_item_id,
             n=num_neighbors,
             eliminate_duplicates=eliminate_duplicates,
             mood_similarity=mood_similarity,
-            radius_similarity=radius_similarity
+            radius_similarity=radius_similarity,
+            min_rating=min_rating
         )
         if not neighbor_results:
             return jsonify({"error": "Target track not found in index or no similar tracks found."}), 404

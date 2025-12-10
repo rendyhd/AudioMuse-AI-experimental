@@ -224,7 +224,9 @@ def sync_album_batch_task(parent_task_id, album_batch, pocketbase_url, pocketbas
                                 moods=moods,
                                 embedding_vector=embedding_vector,
                                 energy=remote_score_record.get('energy'),
-                                other_features=remote_score_record.get('other_features')
+                                other_features=remote_score_record.get('other_features'),
+                                rating=remote_score_record.get('rating'),
+                                rating_source=remote_score_record.get('rating_source')
                             )
                             logger.info(f"{log_prefix} Synced down from remote: '{title}' by '{artist}'.")
                         except (json.JSONDecodeError, TypeError) as e:

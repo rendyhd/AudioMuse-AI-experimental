@@ -231,6 +231,7 @@ def extend_playlist_api():
     similarity_threshold = payload.get('similarity_threshold', 0.5)
     included_ids = payload.get('included_ids', [])
     excluded_ids = payload.get('excluded_ids', [])
+    min_rating = payload.get('min_rating')  # Optional rating filter (0-5 scale)
 
     search_only = payload.get('search_only', False)
     source_ids = payload.get('source_ids', [])  # Direct source IDs from Smart Filter
@@ -381,6 +382,13 @@ def extend_playlist_api():
             # Skip if already in playlist, included, or excluded
             if item_id in already_included_ids:
                 continue
+
+            # Filter by minimum rating if specified
+            if min_rating is not None:
+                meta = metadata_map.get(item_id, {})
+                track_rating = meta.get('rating')
+                if track_rating is None or track_rating < min_rating:
+                    continue
 
             # Active Exclusion Filtering: Check distance to excluded centroid
             if excluded_centroid is not None:

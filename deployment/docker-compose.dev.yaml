@@ -32,10 +32,21 @@ services:
       - "8000:8000" # Map host port 8000 to container port 8000
     environment:
       SERVICE_TYPE: "flask" # Tells the container to run the Flask app
-      MEDIASERVER_TYPE: "jellyfin" # Specify the media server type
-      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID}"
-      JELLYFIN_TOKEN: "${JELLYFIN_TOKEN}"
-      JELLYFIN_URL: "${JELLYFIN_URL}"
+      MEDIASERVER_TYPE: "${MEDIASERVER_TYPE:-plex}" # Use env var (default: plex)
+      # Plex settings
+      PLEX_URL: "${PLEX_URL}"
+      PLEX_TOKEN: "${PLEX_TOKEN}"
+      ENABLE_DIRECT_FILE_ACCESS: "${ENABLE_DIRECT_FILE_ACCESS:-true}"
+      DIRECT_FILE_PATH_MAPPING: "${DIRECT_FILE_PATH_MAPPING:-}"
+      MUSIC_LIBRARIES: "${MUSIC_LIBRARIES:-}"
+      # Jellyfin settings (for playlist sync or fallback)
+      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID:-}"
+      JELLYFIN_TOKEN: "${JELLYFIN_TOKEN:-}"
+      JELLYFIN_URL: "${JELLYFIN_URL:-}"
+      # Multi-Server Playlist Sync
+      PLAYLIST_PRIMARY_SERVER: "${PLAYLIST_PRIMARY_SERVER:-}"
+      PLAYLIST_SECONDARY_SERVERS: "${PLAYLIST_SECONDARY_SERVERS:-}"
+      PLAYLIST_SYNC_ENABLED: "${PLAYLIST_SYNC_ENABLED:-true}"
       # DATABASE_URL is now constructed by config.py from the following:
       POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
@@ -65,6 +76,7 @@ services:
       - ../app_extend_playlist.py:/app/app_extend_playlist.py
       - ../app_external.py:/app/app_external.py
       - ../app_helper.py:/app/app_helper.py
+      - ../app_playlist_sync.py:/app/app_playlist_sync.py
       - ../app_helper_artist.py:/app/app_helper_artist.py
       - ../app_map.py:/app/app_map.py
       - ../app_path.py:/app/app_path.py
@@ -99,10 +111,21 @@ services:
     container_name: audiomuse-ai-worker-instance-dev
     environment:
       SERVICE_TYPE: "worker" # Tells the container to run the RQ worker
-      MEDIASERVER_TYPE: "jellyfin" # Specify the media server type
-      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID}"
-      JELLYFIN_TOKEN: "${JELLYFIN_TOKEN}"
-      JELLYFIN_URL: "${JELLYFIN_URL}"
+      MEDIASERVER_TYPE: "${MEDIASERVER_TYPE:-plex}" # Use env var (default: plex)
+      # Plex settings
+      PLEX_URL: "${PLEX_URL}"
+      PLEX_TOKEN: "${PLEX_TOKEN}"
+      ENABLE_DIRECT_FILE_ACCESS: "${ENABLE_DIRECT_FILE_ACCESS:-true}"
+      DIRECT_FILE_PATH_MAPPING: "${DIRECT_FILE_PATH_MAPPING:-}"
+      MUSIC_LIBRARIES: "${MUSIC_LIBRARIES:-}"
+      # Jellyfin settings (for playlist sync or fallback)
+      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID:-}"
+      JELLYFIN_TOKEN: "${JELLYFIN_TOKEN:-}"
+      JELLYFIN_URL: "${JELLYFIN_URL:-}"
+      # Multi-Server Playlist Sync
+      PLAYLIST_PRIMARY_SERVER: "${PLAYLIST_PRIMARY_SERVER:-}"
+      PLAYLIST_SECONDARY_SERVERS: "${PLAYLIST_SECONDARY_SERVERS:-}"
+      PLAYLIST_SYNC_ENABLED: "${PLAYLIST_SYNC_ENABLED:-true}"
       # DATABASE_URL is now constructed by config.py from the following:
       POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
@@ -118,6 +141,16 @@ services:
       MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
       TEMP_DIR: "/app/temp_audio"
       USE_GPU_CLUSTERING: "${USE_GPU_CLUSTERING:-false}"
+      # Performance optimization settings
+      USE_MULTIPROCESSING: "${USE_MULTIPROCESSING:-true}"
+      MULTIPROCESSING_WORKERS: "${MULTIPROCESSING_WORKERS:-8}"
+      POOL_MAX_TASKS_BEFORE_REFRESH: "${POOL_MAX_TASKS_BEFORE_REFRESH:-500}"
+      ONNX_BATCH_SIZE: "${ONNX_BATCH_SIZE:-512}"
+      CHUNK_SIZE_TRACKS: "${CHUNK_SIZE_TRACKS:-16}"
+      USE_FFMPEG_DECODER: "${USE_FFMPEG_DECODER:-true}"
+      USE_FAST_TEMPO: "${USE_FAST_TEMPO:-true}"
+      SKIP_KEY_DETECTION: "${SKIP_KEY_DETECTION:-false}"
+    shm_size: '4gb'  # Required for SharedMemory between processes
     volumes:
       # Mount all application code as volumes for live editing
       - ../app.py:/app/app.py
@@ -131,6 +164,7 @@ services:
       - ../app_extend_playlist.py:/app/app_extend_playlist.py
       - ../app_external.py:/app/app_external.py
       - ../app_helper.py:/app/app_helper.py
+      - ../app_playlist_sync.py:/app/app_playlist_sync.py
       - ../app_helper_artist.py:/app/app_helper_artist.py
       - ../app_map.py:/app/app_map.py
       - ../app_path.py:/app/app_path.py
@@ -154,6 +188,8 @@ services:
       - ./supervisord.conf:/etc/supervisor/conf.d/supervisord.conf
       # Temp audio directory
       - temp-audio-worker:/app/temp_audio
+      # Music share via Docker CIFS volume
+      - audiomuse-music-share:/data/music:ro
     depends_on:
       - redis
       - postgres
@@ -173,10 +209,12 @@ volumes:
       name: audiomuse_redis-data
   postgres-data:
     external:
-      name: audiomuse_postgres-data
+      name: audiomuse_postgres-data-plex-v2
   temp-audio-flask:
     external:
       name: audiomuse_temp-audio-flask
   temp-audio-worker:
     external:
       name: audiomuse_temp-audio-worker
+  audiomuse-music-share:
+    external: true
