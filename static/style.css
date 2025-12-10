@@ -504,8 +504,178 @@ body.dark-mode #cancel-sync-btn:disabled {
     max-height: 15rem;
     color: var(--text-main);
     white-space: pre-wrap;
-    margin-top: 1rem;
+    margin-top: 0;
     border: 1px solid var(--border-color);
+}
+
+/* --- Task Status Card --- */
+.task-status-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+}
+
+.task-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.task-type-badge {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-title);
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.status-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-progress {
+    background-color: var(--color-primary);
+    color: white;
+}
+
+.progress-section {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+}
+
+.progress-section .progress-bar-container {
+    flex-grow: 1;
+    margin-top: 0;
+}
+
+.progress-percentage {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-title);
+    min-width: 3rem;
+    text-align: right;
+}
+
+/* --- Task Breakdown --- */
+.status-breakdown {
+    background-color: var(--bg-body);
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.breakdown-row {
+    display: grid;
+    grid-template-columns: 1.5rem 1fr 3rem 1fr;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.breakdown-row:last-child {
+    border-bottom: none;
+}
+
+.breakdown-icon {
+    font-size: 1rem;
+    text-align: center;
+}
+
+.breakdown-row.completed .breakdown-icon { color: var(--color-success); }
+.breakdown-row.in-progress .breakdown-icon { color: var(--color-primary); }
+.breakdown-row.queued .breakdown-icon { color: var(--text-muted); }
+.breakdown-row.skipped .breakdown-icon { color: var(--text-muted); }
+.breakdown-row.failed .breakdown-icon { color: var(--color-danger); }
+
+.breakdown-label {
+    font-size: 0.875rem;
+    color: var(--text-main);
+}
+
+.breakdown-count {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-title);
+    text-align: right;
+}
+
+.mini-bar {
+    height: 0.5rem;
+    background-color: var(--border-color);
+    border-radius: 9999px;
+    overflow: hidden;
+}
+
+.mini-bar-fill {
+    height: 100%;
+    border-radius: 9999px;
+    transition: width 0.3s ease-in-out;
+}
+
+.breakdown-row.completed .mini-bar-fill { background-color: var(--color-success); }
+.breakdown-row.in-progress .mini-bar-fill { background-color: var(--color-primary); }
+.breakdown-row.queued .mini-bar-fill { background-color: var(--text-muted); }
+.breakdown-row.skipped .mini-bar-fill { background-color: var(--border-color-darker); }
+.breakdown-row.failed .mini-bar-fill { background-color: var(--color-danger); }
+
+/* --- Task Meta --- */
+.task-meta {
+    margin-bottom: 1rem;
+}
+
+.task-meta p {
+    margin: 0.25rem 0;
+    font-size: 0.875rem;
+}
+
+.meta-label {
+    color: var(--text-muted);
+}
+
+.task-id-text {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* --- Log Details Collapsible --- */
+.log-details {
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    overflow: hidden;
+}
+
+.log-details summary {
+    padding: 0.75rem 1rem;
+    background-color: var(--bg-body);
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-main);
+    user-select: none;
+}
+
+.log-details summary:hover {
+    background-color: var(--bg-table-hover);
+}
+
+.log-details[open] summary {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.log-details #status-details {
+    border: none;
+    border-radius: 0;
+    margin: 0;
 }
 
 /* --- Playlists Section --- */

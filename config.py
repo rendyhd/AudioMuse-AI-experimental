@@ -32,6 +32,15 @@ elif MEDIASERVER_TYPE == "emby":
 else:
     HEADERS = {}
 
+# --- Plex Constants ---
+# These are used only if MEDIASERVER_TYPE is "plex".
+PLEX_URL = os.environ.get("PLEX_URL", "http://localhost:32400")
+PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
+# Direct file access - reads files from mounted CIFS/NFS instead of HTTP download
+ENABLE_DIRECT_FILE_ACCESS = os.environ.get("ENABLE_DIRECT_FILE_ACCESS", "False").lower() == "true"
+# Path mapping: "plex_prefix:container_prefix" (e.g., "/mnt/plex/music:/mnt/music")
+DIRECT_FILE_PATH_MAPPING = os.environ.get("DIRECT_FILE_PATH_MAPPING", "")
+
 # --- Navidrome (Subsonic API) Constants ---
 # These are used only if MEDIASERVER_TYPE is "navidrome".
 NAVIDROME_URL = os.environ.get("NAVIDROME_URL", "http://your_navidrome_url:4533")
@@ -120,6 +129,32 @@ CLUSTERING_BATCH_CHECK_INTERVAL_SECONDS = int(os.environ.get("CLUSTERING_BATCH_C
 # --- Batching Constants for Analysis ---
 REBUILD_INDEX_BATCH_SIZE = int(os.environ.get("REBUILD_INDEX_BATCH_SIZE", "100")) # Rebuild Voyager index after this many albums are analyzed.
 AUDIO_LOAD_TIMEOUT = int(os.getenv("AUDIO_LOAD_TIMEOUT", "600")) # Timeout in seconds for loading a single audio file.
+
+# --- Performance Optimization Settings ---
+# Multiprocessing for CPU-bound audio feature extraction (bypasses Python GIL)
+USE_MULTIPROCESSING = os.environ.get("USE_MULTIPROCESSING", "True").lower() == "true"
+# Number of worker processes - recommended: CPU cores / 2 (leave headroom for GPU and main process)
+MULTIPROCESSING_WORKERS = int(os.environ.get("MULTIPROCESSING_WORKERS", str(min(os.cpu_count() // 2, 8) if os.cpu_count() else 4)))
+# Maximum tracks per worker pool before recycling (prevents memory leaks)
+POOL_MAX_TASKS_BEFORE_REFRESH = int(os.environ.get("POOL_MAX_TASKS_BEFORE_REFRESH", "500"))
+
+# Batched ONNX Inference for GPU efficiency
+# Higher values = better GPU throughput but more VRAM usage
+# Recommended: 512-768 for 16GB VRAM, 256-384 for 8GB VRAM
+ONNX_BATCH_SIZE = int(os.environ.get("ONNX_BATCH_SIZE", "512"))
+
+# Chunked pipeline: process tracks in chunks to overlap CPU and GPU work
+# Chunk size = tracks processed together before GPU inference
+CHUNK_SIZE_TRACKS = int(os.environ.get("CHUNK_SIZE_TRACKS", str(MULTIPROCESSING_WORKERS * 2)))
+
+# FFmpeg audio decoder (3.3x faster than librosa, bypasses Python GIL)
+USE_FFMPEG_DECODER = os.environ.get("USE_FFMPEG_DECODER", "True").lower() == "true"
+
+# Fast tempo detection (uses librosa.beat.tempo instead of beat_track, 2-3x faster)
+USE_FAST_TEMPO = os.environ.get("USE_FAST_TEMPO", "True").lower() == "true"
+
+# Skip CPU feature extraction (key/scale detection) for speed - only affects metadata, not embeddings
+SKIP_KEY_DETECTION = os.environ.get("SKIP_KEY_DETECTION", "False").lower() == "true"
 
 # --- Guided Evolutionary Clustering Constants ---
 TOP_N_ELITES = int(os.environ.get("CLUSTERING_TOP_N_ELITES", "10")) # Number of best solutions to keep as elites

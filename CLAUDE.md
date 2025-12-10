@@ -2,9 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Detailed Architecture Documentation
+
+For in-depth documentation, see the `docs/` directory:
+
+| Document | Path | Description |
+|----------|------|-------------|
+| Architecture Working Doc | `docs/ARCHITECTURE_WORKING_DOC.md` | Quick reference and system diagrams |
+| Project Structure | `docs/architecture/PROJECT_STRUCTURE.md` | Directory layout, component overview |
+| Tech Stack | `docs/architecture/TECH_STACK.md` | Technologies and versions |
+| Dependencies | `docs/architecture/DEPENDENCIES.md` | External packages |
+| Internal Dependencies | `docs/architecture/INTERNAL_DEPENDENCIES.md` | Module relationships |
+| API Surface | `docs/architecture/API_SURFACE.md` | REST API endpoints |
+| Patterns & Conventions | `docs/architecture/PATTERNS_AND_CONVENTIONS.md` | Code patterns |
+| Feature Inventory | `docs/features/FEATURE_INVENTORY.md` | All features with status |
+| Configuration | `docs/environments/CONFIGURATION_VARIABLES.md` | Environment variables |
+| Security Audit | `docs/security/SECURITY_AUDIT.md` | Security considerations |
+| Performance Analysis | `docs/quality/PERFORMANCE_ANALYSIS.md` | Optimization details |
+| Improvement Backlog | `docs/improvements/IMPROVEMENT_BACKLOG.md` | Prioritized improvements |
+
 ## Project Overview
 
-AudioMuse-AI is a self-hosted music analysis and playlist generation system that uses machine learning to analyze audio files and create intelligent playlists. It integrates with multiple media servers (Jellyfin, Navidrome, Lyrion, Emby) and uses audio analysis (Librosa, ONNX models) to generate sonic fingerprints and cluster similar songs.
+AudioMuse-AI is a self-hosted music analysis and playlist generation system that uses machine learning to analyze audio files and create intelligent playlists. It integrates with multiple media servers (Jellyfin, Navidrome, Lyrion, Emby, Plex) and uses audio analysis (Librosa, ONNX models) to generate sonic fingerprints and cluster similar songs.
 
 ## Architecture
 
@@ -80,8 +99,9 @@ Each `app_*.py` file is a Flask blueprint handling a specific feature:
 
 **Media Server Integration** (`tasks/mediaserver*.py`):
 - Abstraction layer in `tasks/mediaserver.py` dispatches to server-specific implementations
-- Each server module (Jellyfin, Navidrome, Emby, Lyrion, MPD) implements: `get_recent_albums()`, `get_tracks_from_album()`, `download_track()`, `create_playlist_on_server()`
+- Each server module (Jellyfin, Navidrome, Emby, Lyrion, Plex) implements: `get_recent_albums()`, `get_tracks_from_album()`, `download_track()`, `create_playlist_on_server()`
 - Server type determined by `MEDIASERVER_TYPE` environment variable
+- Multi-server playlist sync available via `app_playlist_sync.py` and `tasks/playlist_sync.py`
 
 **Voyager Index Manager** (`tasks/voyager_manager.py`):
 - Builds and stores Spotify's Voyager HNSW index for approximate nearest neighbor search
@@ -286,3 +306,175 @@ Access interactive API docs at `http://localhost:8000/apidocs` (Swagger UI) when
 Current version is tracked in `config.py` as `APP_VERSION`. Version is injected into all templates via context processor and logged on startup.
 
 From v0.7.0-beta onwards, ONNX replaced TensorFlow for model inference. Libraries analyzed before v0.7.0 must be re-analyzed for compatibility.
+
+# Using Gemini CLI for Large Codebase Analysis
+
+  When analyzing large codebases or multiple files that might exceed context limits, use the Gemini CLI with its massive
+  context window. Use `gemini -p` to leverage Google Gemini's large context capacity.
+
+  ## File and Directory Inclusion Syntax
+
+  Use the `@` syntax to include files and directories in your Gemini prompts. The paths should be relative to WHERE you run the
+   gemini command:
+
+  ### Examples:
+
+  **Single file analysis:**
+  ```bash
+  gemini -p "@src/main.py Explain this file's purpose and structure"
+
+  Multiple files:
+  gemini -p "@package.json @src/index.js Analyze the dependencies used in the code"
+
+  Entire directory:
+  gemini -p "@src/ Summarize the architecture of this codebase"
+
+  Multiple directories:
+  gemini -p "@src/ @tests/ Analyze test coverage for the source code"
+
+  Current directory and subdirectories:
+  gemini -p "@./ Give me an overview of this entire project"
+  
+#
+ Or use --all_files flag:
+  gemini --all_files -p "Analyze the project structure and dependencies"
+
+  Implementation Verification Examples
+
+  Check if a feature is implemented:
+  gemini -p "@src/ @lib/ Has dark mode been implemented in this codebase? Show me the relevant files and functions"
+
+  Verify authentication implementation:
+  gemini -p "@src/ @middleware/ Is JWT authentication implemented? List all auth-related endpoints and middleware"
+
+  Check for specific patterns:
+  gemini -p "@src/ Are there any React hooks that handle WebSocket connections? List them with file paths"
+
+  Verify error handling:
+  gemini -p "@src/ @api/ Is proper error handling implemented for all API endpoints? Show examples of try-catch blocks"
+
+  Check for rate limiting:
+  gemini -p "@backend/ @middleware/ Is rate limiting implemented for the API? Show the implementation details"
+
+  Verify caching strategy:
+  gemini -p "@src/ @lib/ @services/ Is Redis caching implemented? List all cache-related functions and their usage"
+
+  Check for specific security measures:
+  gemini -p "@src/ @api/ Are SQL injection protections implemented? Show how user inputs are sanitized"
+
+  Verify test coverage for features:
+  gemini -p "@src/payment/ @tests/ Is the payment processing module fully tested? List all test cases"
+
+  When to Use Gemini CLI
+
+  Use gemini -p when:
+  - Analyzing entire codebases or large directories
+  - Comparing multiple large files
+  - Need to understand project-wide patterns or architecture
+  - Current context window is insufficient for the task
+  - Working with files totaling more than 100KB
+  - Verifying if specific features, patterns, or security measures are implemented
+  - Checking for the presence of certain coding patterns across the entire codebase
+
+  Important Notes
+
+  - Paths in @ syntax are relative to your current working directory when invoking gemini
+  - The CLI will include file contents directly in the context
+  - No need for --yolo flag for read-only analysis
+  - Gemini's context window can handle entire codebases that would overflow Claude's context
+  - When checking implementations, be specific about what you're looking for to get accurate results # Using Gemini CLI for Large Codebase Analysis
+
+
+  When analyzing large codebases or multiple files that might exceed context limits, use the Gemini CLI with its massive
+  context window. Use `gemini -p` to leverage Google Gemini's large context capacity.
+
+
+  ## File and Directory Inclusion Syntax
+
+
+  Use the `@` syntax to include files and directories in your Gemini prompts. The paths should be relative to WHERE you run the
+   gemini command:
+
+
+  ### Examples:
+
+
+  **Single file analysis:**
+  ```bash
+  gemini -p "@src/main.py Explain this file's purpose and structure"
+
+
+  Multiple files:
+  gemini -p "@package.json @src/index.js Analyze the dependencies used in the code"
+
+
+  Entire directory:
+  gemini -p "@src/ Summarize the architecture of this codebase"
+
+
+  Multiple directories:
+  gemini -p "@src/ @tests/ Analyze test coverage for the source code"
+
+
+  Current directory and subdirectories:
+  gemini -p "@./ Give me an overview of this entire project"
+  # Or use --all_files flag:
+  gemini --all_files -p "Analyze the project structure and dependencies"
+
+
+  Implementation Verification Examples
+
+
+  Check if a feature is implemented:
+  gemini -p "@src/ @lib/ Has dark mode been implemented in this codebase? Show me the relevant files and functions"
+
+
+  Verify authentication implementation:
+  gemini -p "@src/ @middleware/ Is JWT authentication implemented? List all auth-related endpoints and middleware"
+
+
+  Check for specific patterns:
+  gemini -p "@src/ Are there any React hooks that handle WebSocket connections? List them with file paths"
+
+
+  Verify error handling:
+  gemini -p "@src/ @api/ Is proper error handling implemented for all API endpoints? Show examples of try-catch blocks"
+
+
+  Check for rate limiting:
+  gemini -p "@backend/ @middleware/ Is rate limiting implemented for the API? Show the implementation details"
+
+
+  Verify caching strategy:
+  gemini -p "@src/ @lib/ @services/ Is Redis caching implemented? List all cache-related functions and their usage"
+
+
+  Check for specific security measures:
+  gemini -p "@src/ @api/ Are SQL injection protections implemented? Show how user inputs are sanitized"
+
+
+  Verify test coverage for features:
+  gemini -p "@src/payment/ @tests/ Is the payment processing module fully tested? List all test cases"
+
+
+  When to Use Gemini CLI
+
+
+  Use gemini -p when:
+  - Analyzing entire codebases or large directories
+  - Comparing multiple large files
+  - Need to understand project-wide patterns or architecture
+  - Current context window is insufficient for the task
+  - Working with files totaling more than 100KB
+  - Verifying if specific features, patterns, or security measures are implemented
+  - Checking for the presence of certain coding patterns across the entire codebase
+
+
+  Important Notes
+
+
+  - Paths in @ syntax are relative to your current working directory when invoking gemini
+  - The CLI will include file contents directly in the context
+  - No need for --yolo flag for read-only analysis
+  - Gemini's context window can handle entire codebases that would overflow Claude's context
+  - When checking implementations, be specific about what you're looking for to get accurate results

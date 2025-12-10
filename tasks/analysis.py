@@ -1,8 +1,15 @@
 # tasks/analysis.py
 
 import os
+import sys
 import shutil
+import subprocess
+import glob
+import tempfile
+import io
 from collections import defaultdict
+from multiprocessing import get_context
+from multiprocessing.shared_memory import SharedMemory
 import numpy as np
 import json
 import time
@@ -42,7 +49,10 @@ from config import (
     LN_OTHER_FEATURES_DIVERSITY_STATS, LN_OTHER_FEATURES_PURITY_STATS,
     STRATIFIED_SAMPLING_TARGET_PERCENTILE,
     OTHER_FEATURE_PREDOMINANCE_THRESHOLD_FOR_PURITY as CONFIG_OTHER_FEATURE_PREDOMINANCE_THRESHOLD_FOR_PURITY,
-    AUDIO_LOAD_TIMEOUT # Add this to your config.py, e.g., AUDIO_LOAD_TIMEOUT = 600 (for a 10-minute timeout)
+    AUDIO_LOAD_TIMEOUT,
+    # Performance optimization settings
+    USE_MULTIPROCESSING, MULTIPROCESSING_WORKERS, POOL_MAX_TASKS_BEFORE_REFRESH,
+    ONNX_BATCH_SIZE, CHUNK_SIZE_TRACKS, USE_FFMPEG_DECODER, USE_FAST_TEMPO, SKIP_KEY_DETECTION
 )
 
 
@@ -112,6 +122,361 @@ CLASS_INDEX_MAP = {
     "danceable": 0,
     "party": 1,
 }
+
+# --- Multiprocessing Configuration ---
+# Use RAM-backed /dev/shm on Linux, system temp on Windows
+TEMP_SHM_DIR = "/dev/shm/audiomuse" if sys.platform != "win32" else os.path.join(tempfile.gettempdir(), "audiomuse")
+
+# Global process pool (reused across albums)
+_worker_pool = None
+_pool_task_count = 0
+
+
+def _cleanup_orphaned_shm():
+    """Clean up any orphaned SharedMemory segments from previous crashed runs."""
+    if sys.platform == "win32":
+        return  # SharedMemory cleanup handled differently on Windows
+
+    # Clean up orphaned psm_* files in /dev/shm
+    for shm_file in glob.glob("/dev/shm/psm_*"):
+        try:
+            shm_name = os.path.basename(shm_file)
+            shm = SharedMemory(name=shm_name)
+            shm.close()
+            shm.unlink()
+            logger.debug(f"Cleaned up orphaned SharedMemory: {shm_name}")
+        except Exception:
+            pass
+
+
+# Clean up on module load
+_cleanup_orphaned_shm()
+
+
+def load_audio_with_ffmpeg(file_path, target_sr=16000, timeout=600):
+    """
+    Load audio using FFmpeg subprocess (3.3x faster than librosa).
+    FFmpeg decodes to raw PCM, which we then convert to numpy array.
+
+    Args:
+        file_path: Path to audio file
+        target_sr: Target sample rate (default 16000)
+        timeout: Timeout in seconds
+
+    Returns:
+        tuple: (audio_array, sample_rate) or (None, None) on failure
+    """
+    if not USE_FFMPEG_DECODER:
+        return None, None  # Fall back to librosa
+
+    try:
+        # FFmpeg command: decode to raw 16-bit PCM, mono, target sample rate
+        cmd = [
+            'ffmpeg', '-i', file_path,
+            '-f', 's16le',  # Raw 16-bit signed little-endian
+            '-acodec', 'pcm_s16le',
+            '-ar', str(target_sr),
+            '-ac', '1',  # Mono
+            '-loglevel', 'error',
+            '-'  # Output to stdout
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=timeout
+        )
+
+        if result.returncode != 0:
+            logger.debug(f"FFmpeg failed for {os.path.basename(file_path)}: {result.stderr.decode()[:200]}")
+            return None, None
+
+        # Convert raw bytes to numpy float32 array
+        audio_int16 = np.frombuffer(result.stdout, dtype=np.int16)
+        audio_float32 = audio_int16.astype(np.float32) / 32768.0
+
+        if audio_float32.size == 0:
+            return None, None
+
+        return audio_float32, target_sr
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"FFmpeg timeout for {os.path.basename(file_path)}")
+        return None, None
+    except FileNotFoundError:
+        logger.warning("FFmpeg not found, falling back to librosa")
+        return None, None
+    except Exception as e:
+        logger.debug(f"FFmpeg error for {os.path.basename(file_path)}: {e}")
+        return None, None
+
+
+def cpu_process_audio_worker(args):
+    """
+    Worker function for CPU-bound audio processing in separate process.
+    Extracts CPU features and creates spectrograms, returns via SharedMemory.
+
+    Args:
+        args: tuple of (file_path, track_id, item_dict)
+
+    Returns:
+        dict with track_id, cpu_features, shm_name (SharedMemory), patches_shape, patches_dtype
+        or None on failure
+    """
+    file_path, track_id, item_dict = args
+
+    try:
+        # --- 1. Load Audio (FFmpeg first, fallback to librosa) ---
+        audio, sr = load_audio_with_ffmpeg(file_path, target_sr=16000, timeout=AUDIO_LOAD_TIMEOUT)
+
+        if audio is None:
+            # Fallback to librosa
+            try:
+                audio, sr = librosa.load(file_path, sr=16000, mono=True, res_type='kaiser_fast')
+            except Exception as e:
+                logger.warning(f"Failed to load audio for track {track_id}: {e}")
+                return None
+
+        if audio is None or audio.size == 0:
+            logger.warning(f"Empty audio for track {track_id}")
+            return None
+
+        # --- 2. Extract CPU Features ---
+        cpu_features = {}
+
+        # Tempo (fast or full)
+        if USE_FAST_TEMPO:
+            tempo = librosa.beat.tempo(y=audio, sr=sr)[0]
+        else:
+            tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
+        cpu_features["tempo"] = float(tempo)
+
+        # Energy
+        cpu_features["energy"] = float(np.mean(librosa.feature.rms(y=audio)))
+
+        # Key/Scale detection (optional - can be slow)
+        if not SKIP_KEY_DETECTION:
+            try:
+                chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
+                chroma_mean = np.mean(chroma, axis=1)
+                key_vals = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+                major_profile = np.array([1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1])
+                minor_profile = np.array([1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0])
+
+                major_correlations = np.array([np.corrcoef(chroma_mean, np.roll(major_profile, i))[0, 1] for i in range(12)])
+                minor_correlations = np.array([np.corrcoef(chroma_mean, np.roll(minor_profile, i))[0, 1] for i in range(12)])
+
+                major_key_idx = np.argmax(major_correlations)
+                minor_key_idx = np.argmax(minor_correlations)
+
+                if major_correlations[major_key_idx] > minor_correlations[minor_key_idx]:
+                    cpu_features["key"] = key_vals[major_key_idx]
+                    cpu_features["scale"] = 'major'
+                else:
+                    cpu_features["key"] = key_vals[minor_key_idx]
+                    cpu_features["scale"] = 'minor'
+            except Exception:
+                cpu_features["key"] = "Unknown"
+                cpu_features["scale"] = "Unknown"
+        else:
+            cpu_features["key"] = "Unknown"
+            cpu_features["scale"] = "Unknown"
+
+        # --- 3. Create Spectrograms ---
+        n_mels, hop_length, n_fft, frame_size = 96, 256, 512, 187
+        mel_spec = librosa.feature.melspectrogram(
+            y=audio, sr=sr, n_fft=n_fft, hop_length=hop_length,
+            n_mels=n_mels, window='hann', center=False, power=2.0,
+            norm='slaney', htk=False
+        )
+        log_mel_spec = np.log10(1 + 10000 * mel_spec)
+        spec_patches = [log_mel_spec[:, i:i+frame_size] for i in range(0, log_mel_spec.shape[1] - frame_size + 1, frame_size)]
+
+        if not spec_patches:
+            logger.warning(f"Track too short for spectrogram: {track_id}")
+            return None
+
+        final_patches = np.array(spec_patches).transpose(0, 2, 1).astype(np.float32)
+
+        # Ensure contiguous for SharedMemory
+        if not final_patches.flags['C_CONTIGUOUS']:
+            final_patches = np.ascontiguousarray(final_patches)
+
+        # --- 4. Transfer via SharedMemory ---
+        shm = SharedMemory(create=True, size=final_patches.nbytes)
+        try:
+            shm_array = np.ndarray(
+                shape=final_patches.shape,
+                dtype=final_patches.dtype,
+                buffer=shm.buf
+            )
+            np.copyto(shm_array, final_patches)
+            shm_name = shm.name
+            shm.close()  # Close handle; memory persists until unlink
+        except Exception:
+            shm.close()
+            shm.unlink()
+            raise
+
+        return {
+            'track_id': track_id,
+            'item': item_dict,
+            'cpu_features': cpu_features,
+            'shm_name': shm_name,
+            'patches_shape': final_patches.shape,
+            'patches_dtype': str(final_patches.dtype)
+        }
+
+    except Exception as e:
+        logger.error(f"CPU worker failed for track {track_id}: {e}")
+        return None
+
+
+def gpu_batch_embedding_inference(cpu_results, embedding_session, batch_size=512):
+    """
+    Run batched ONNX embedding inference on GPU for all CPU-processed tracks.
+    Properly cleans up ALL SharedMemory segments (leak-safe).
+
+    Args:
+        cpu_results: List of dicts from cpu_process_audio_worker
+        embedding_session: ONNX session for embedding model
+        batch_size: Number of patches per GPU batch
+
+    Returns:
+        tuple: (dict mapping track_id -> embeddings_per_patch, list of loaded_results)
+    """
+    if not cpu_results:
+        return {}, []
+
+    # Track ALL shm_names from input for guaranteed cleanup
+    all_shm_names = []
+    shm_handles = []
+
+    try:
+        # --- 1. Collect all patches from SharedMemory ---
+        track_patches_list = []
+        track_patch_indices = []  # (track_id, start_idx, end_idx)
+        loaded_results = []
+        current_idx = 0
+
+        for result in cpu_results:
+            if result is None:
+                continue
+
+            shm_name = result.get('shm_name')
+            if shm_name:
+                all_shm_names.append(shm_name)  # Track for cleanup
+
+                try:
+                    shm = SharedMemory(name=shm_name)
+                    shm_handles.append(shm)
+
+                    # Create numpy view from shared memory (zero-copy read)
+                    patches = np.ndarray(
+                        shape=result['patches_shape'],
+                        dtype=np.dtype(result['patches_dtype']),
+                        buffer=shm.buf
+                    ).copy()  # Copy to own memory before shm is closed
+
+                    num_patches = patches.shape[0]
+                    track_patches_list.append(patches)
+                    track_patch_indices.append((result['track_id'], current_idx, current_idx + num_patches))
+                    current_idx += num_patches
+
+                    loaded_results.append({
+                        'track_id': result['track_id'],
+                        'item': result['item'],
+                        'cpu_features': result['cpu_features'],
+                        'patches_shape': result['patches_shape']
+                    })
+
+                except Exception as e:
+                    logger.warning(f"Failed to load from SharedMemory {shm_name}: {e}")
+                    continue
+
+        if not track_patches_list:
+            return {}, []
+
+        # Concatenate all patches
+        all_patches = np.concatenate(track_patches_list, axis=0)
+        total_patches = all_patches.shape[0]
+
+        logger.info(f"[GPU Batch] Running embedding inference on {total_patches} patches from {len(track_patch_indices)} tracks")
+
+        # --- 2. Run batched inference ---
+        all_embeddings = []
+
+        for i in range(0, total_patches, batch_size):
+            batch = all_patches[i:i+batch_size]
+            try:
+                feed_dict = {DEFINED_TENSOR_NAMES['embedding']['input']: batch}
+                batch_embeddings = run_inference(embedding_session, feed_dict, DEFINED_TENSOR_NAMES['embedding']['output'])
+                all_embeddings.append(batch_embeddings)
+            except Exception as e:
+                logger.error(f"[GPU Batch] Embedding inference failed for batch {i//batch_size}: {e}")
+                # Fill with zeros for failed batches
+                all_embeddings.append(np.zeros((len(batch), 200), dtype=np.float32))
+
+        all_embeddings_array = np.concatenate(all_embeddings, axis=0)
+
+        # --- 3. Split embeddings back to tracks ---
+        track_embeddings = {}
+        for track_id, start_idx, end_idx in track_patch_indices:
+            track_embeddings[track_id] = all_embeddings_array[start_idx:end_idx]
+
+        logger.info(f"[GPU Batch] Completed embedding inference for {len(track_embeddings)} tracks")
+        return track_embeddings, loaded_results
+
+    finally:
+        # --- CRITICAL: Clean up ALL SharedMemory segments ---
+        # First close handles we opened
+        for shm in shm_handles:
+            try:
+                shm.close()
+                shm.unlink()
+            except Exception:
+                pass
+
+        # Then ensure ALL shm_names from input are unlinked (even if we failed to open them)
+        for shm_name in all_shm_names:
+            try:
+                shm = SharedMemory(name=shm_name)
+                shm.close()
+                shm.unlink()
+            except FileNotFoundError:
+                pass  # Already unlinked (expected)
+            except Exception as e:
+                logger.debug(f"Failed to cleanup SharedMemory {shm_name}: {e}")
+
+
+def get_or_create_pool():
+    """Get or create a persistent multiprocessing pool."""
+    global _worker_pool, _pool_task_count
+
+    if not USE_MULTIPROCESSING:
+        return None
+
+    # Check if pool needs refresh
+    if _worker_pool is not None and _pool_task_count >= POOL_MAX_TASKS_BEFORE_REFRESH:
+        logger.info(f"Refreshing worker pool after {_pool_task_count} tasks")
+        try:
+            _worker_pool.terminate()
+            _worker_pool.join()
+        except Exception:
+            pass
+        _worker_pool = None
+        _pool_task_count = 0
+
+    # Create pool if needed
+    if _worker_pool is None:
+        ctx = get_context('spawn')  # Use spawn for clean child processes
+        _worker_pool = ctx.Pool(
+            processes=MULTIPROCESSING_WORKERS,
+            maxtasksperchild=100  # Recycle workers to prevent memory leaks
+        )
+        logger.info(f"Created worker pool with {MULTIPROCESSING_WORKERS} workers")
+
+    return _worker_pool
 
 
 # --- Utility Functions ---
@@ -454,33 +819,19 @@ def analyze_album_task(album_id, album_name, top_n_moods, parent_task_id):
             existing_track_ids_set = get_existing_track_ids( [str(t['Id']) for t in tracks])
             total_tracks_in_album = len(tracks)
 
-            # --- PHASE 1: Audio Loading, CPU Features, and Embeddings ---
+            # --- PHASE 1: Audio Loading, CPU Features, and Embeddings (Optimized) ---
             log_and_update_album_task(f"Phase 1/4: Processing audio and generating embeddings...", 10)
-            
-            track_results = {} # Store results by track ID
-            
-            # Initialize Embedding Session ONLY
-            try:
-                embedding_sess = ort.InferenceSession(model_paths['embedding'], providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-            except Exception as e:
-                logger.critical(f"Failed to initialize embedding model: {e}")
-                return {"status": "FAILURE", "message": "Embedding model init failed"}
 
-            for idx, item in enumerate(tracks, 1):
-                if current_job:
-                    task_info = get_task_info_from_db(current_task_id)
-                    parent_info = get_task_info_from_db(parent_task_id) if parent_task_id else None
-                    if (task_info and task_info.get('status') == 'REVOKED') or (parent_info and parent_info.get('status') in ['REVOKED', 'FAILURE']):
-                        log_and_update_album_task(f"Stopping album analysis for '{album_name}' due to parent/self revocation.", current_progress_val, task_state=TASK_STATUS_REVOKED)
-                        return {"status": "REVOKED"}
+            track_results = {}  # Store results by track ID
+            global _pool_task_count
 
+            # Filter tracks that need processing
+            tracks_to_process = []
+            for item in tracks:
                 if str(item['Id']) in existing_track_ids_set:
                     tracks_skipped_count += 1
                     continue
-
-                track_name_full = f"{item['Name']} by {item.get('AlbumArtist', 'Unknown')}"
-                progress = 10 + int(30 * (idx / float(total_tracks_in_album))) # Phase 1 is 10-40%
-                log_and_update_album_task(f"Processing audio: {track_name_full} ({idx}/{total_tracks_in_album})", progress, current_track_name=track_name_full)
+                tracks_to_process.append(item)
 
                 # Store artist mapping
                 try:
@@ -490,26 +841,134 @@ def analyze_album_task(album_id, album_name, top_n_moods, parent_task_id):
                 except Exception:
                     pass
 
-                path = download_track(TEMP_DIR, item)
-                if not path:
-                    continue
+            if not tracks_to_process:
+                log_and_update_album_task(f"All tracks already analyzed.", 100, task_state=TASK_STATUS_SUCCESS)
+                return {"status": "SUCCESS", "message": "All tracks already analyzed", "tracks_analyzed": 0}
 
-                try:
-                    cpu_features, embeddings_per_patch = process_audio_and_embedding(path, embedding_sess)
-                    
-                    if cpu_features and embeddings_per_patch is not None:
-                        # Store everything needed for next phases
-                        track_results[item['Id']] = {
-                            'item': item,
-                            'cpu_features': cpu_features,
-                            'embeddings_per_patch': embeddings_per_patch
-                        }
-                    else:
-                        logger.warning(f"Failed to process audio for {track_name_full}")
-                        tracks_skipped_count += 1
-                finally:
-                    if path and os.path.exists(path):
-                        os.remove(path)
+            # Initialize Embedding Session
+            try:
+                embedding_sess = ort.InferenceSession(model_paths['embedding'], providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+            except Exception as e:
+                logger.critical(f"Failed to initialize embedding model: {e}")
+                return {"status": "FAILURE", "message": "Embedding model init failed"}
+
+            # Use multiprocessing if enabled, otherwise fall back to sequential
+            if USE_MULTIPROCESSING:
+                # --- CHUNKED PARALLEL PIPELINE ---
+                chunk_size = CHUNK_SIZE_TRACKS
+                total_chunks = (len(tracks_to_process) + chunk_size - 1) // chunk_size
+                processed_count = 0
+
+                for chunk_idx, chunk_start in enumerate(range(0, len(tracks_to_process), chunk_size)):
+                    chunk = tracks_to_process[chunk_start:chunk_start + chunk_size]
+
+                    # Check for cancellation between chunks
+                    if current_job:
+                        task_info = get_task_info_from_db(current_task_id)
+                        parent_info = get_task_info_from_db(parent_task_id) if parent_task_id else None
+                        if (task_info and task_info.get('status') == 'REVOKED') or (parent_info and parent_info.get('status') in ['REVOKED', 'FAILURE']):
+                            log_and_update_album_task(f"Stopping album analysis for '{album_name}' due to parent/self revocation.", current_progress_val, task_state=TASK_STATUS_REVOKED)
+                            del embedding_sess
+                            return {"status": "REVOKED"}
+
+                    log_and_update_album_task(
+                        f"Processing chunk {chunk_idx + 1}/{total_chunks} ({len(chunk)} tracks)...",
+                        10 + int(25 * (processed_count / len(tracks_to_process)))
+                    )
+
+                    # Step 1: Download all tracks in chunk
+                    worker_args = []
+                    temp_paths = []
+                    for item in chunk:
+                        path = download_track(TEMP_DIR, item)
+                        if path:
+                            worker_args.append((path, item['Id'], dict(item)))
+                            temp_paths.append(path)
+
+                    if not worker_args:
+                        processed_count += len(chunk)
+                        continue
+
+                    # Step 2: CPU processing in parallel
+                    try:
+                        pool = get_or_create_pool()
+                        if pool:
+                            cpu_results = pool.map(cpu_process_audio_worker, worker_args)
+                            _pool_task_count += len(worker_args)
+                        else:
+                            # Fallback to sequential
+                            cpu_results = [cpu_process_audio_worker(args) for args in worker_args]
+                    except Exception as e:
+                        logger.error(f"Multiprocessing failed: {e}, falling back to sequential")
+                        cpu_results = [cpu_process_audio_worker(args) for args in worker_args]
+
+                    # Step 3: GPU batch embedding inference
+                    try:
+                        track_embeddings, loaded_results = gpu_batch_embedding_inference(
+                            cpu_results, embedding_sess, batch_size=ONNX_BATCH_SIZE
+                        )
+
+                        # Store results
+                        for loaded in loaded_results:
+                            tid = loaded['track_id']
+                            if tid in track_embeddings:
+                                track_results[tid] = {
+                                    'item': loaded['item'],
+                                    'cpu_features': loaded['cpu_features'],
+                                    'embeddings_per_patch': track_embeddings[tid]
+                                }
+                                tracks_analyzed_count += 1
+                            else:
+                                tracks_skipped_count += 1
+                    except Exception as e:
+                        logger.error(f"GPU batch inference failed for chunk: {e}")
+                        tracks_skipped_count += len(chunk)
+
+                    # Step 4: Cleanup temp files
+                    for path in temp_paths:
+                        try:
+                            if path and os.path.exists(path):
+                                os.remove(path)
+                        except Exception:
+                            pass
+
+                    processed_count += len(chunk)
+
+            else:
+                # --- SEQUENTIAL FALLBACK (original behavior) ---
+                for idx, item in enumerate(tracks_to_process, 1):
+                    if current_job:
+                        task_info = get_task_info_from_db(current_task_id)
+                        parent_info = get_task_info_from_db(parent_task_id) if parent_task_id else None
+                        if (task_info and task_info.get('status') == 'REVOKED') or (parent_info and parent_info.get('status') in ['REVOKED', 'FAILURE']):
+                            log_and_update_album_task(f"Stopping album analysis for '{album_name}' due to parent/self revocation.", current_progress_val, task_state=TASK_STATUS_REVOKED)
+                            del embedding_sess
+                            return {"status": "REVOKED"}
+
+                    track_name_full = f"{item['Name']} by {item.get('AlbumArtist', 'Unknown')}"
+                    progress = 10 + int(30 * (idx / float(len(tracks_to_process))))
+                    log_and_update_album_task(f"Processing audio: {track_name_full} ({idx}/{len(tracks_to_process)})", progress, current_track_name=track_name_full)
+
+                    path = download_track(TEMP_DIR, item)
+                    if not path:
+                        continue
+
+                    try:
+                        cpu_features, embeddings_per_patch = process_audio_and_embedding(path, embedding_sess)
+
+                        if cpu_features and embeddings_per_patch is not None:
+                            track_results[item['Id']] = {
+                                'item': item,
+                                'cpu_features': cpu_features,
+                                'embeddings_per_patch': embeddings_per_patch
+                            }
+                            tracks_analyzed_count += 1
+                        else:
+                            logger.warning(f"Failed to process audio for {track_name_full}")
+                            tracks_skipped_count += 1
+                    finally:
+                        if path and os.path.exists(path):
+                            os.remove(path)
 
             # Unload Embedding Session
             del embedding_sess

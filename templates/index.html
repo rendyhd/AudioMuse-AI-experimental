@@ -423,26 +423,69 @@
             <button id="start-analysis-btn">Start Analysis</button>
             <button id="start-clustering-btn">Start Clustering</button>
             <button id="fetch-playlists-btn">Fetch Playlists</button>
+            <button id="sync-ratings-btn" title="Sync ratings from your media server">Sync Ratings</button>
         </div>
         <button id="cancel-task-btn">Cancel Current Task</button>
     </section>
 
     <section>
         <h2>Task Status</h2>
-        <div id="task-status-display">
-            <p><span class="status-label">Task ID:</span> <span id="status-task-id">N/A</span></p>
-            <p><span class="status-label">Running Time:</span> <span id="status-running-time">-- : -- : --</span></p>
-            <p><span class="status-label">Type:</span> <span id="status-task-type">N/A</span></p>
-            <p><span class="status-label">Status:</span> <span id="status-status">IDLE</span></p>
-            <p><span class="status-label">Status Message:</span> <span id="status-log">N/A</span></p>
-            <p><span class="status-label">Progress:</span> <span id="status-progress">0</span>%</p>
-            <div class="progress-bar-container">
-                <div id="progress-bar"></div>
+        <div id="task-status-display" class="task-status-card">
+            <div class="task-header">
+                <span id="status-task-type" class="task-type-badge">N/A</span>
+                <span id="status-status" class="status-badge status-idle">IDLE</span>
             </div>
-            <div style="margin-top: 1rem;">
-                <h3>Details / Log:</h3>
+
+            <div class="progress-section">
+                <div class="progress-bar-container">
+                    <div id="progress-bar"></div>
+                </div>
+                <span id="status-progress" class="progress-percentage">0</span><span class="progress-percentage">%</span>
+            </div>
+
+            <div class="status-breakdown" id="status-breakdown">
+                <div class="breakdown-row completed">
+                    <span class="breakdown-icon">&#10003;</span>
+                    <span class="breakdown-label">Completed</span>
+                    <span class="breakdown-count" id="count-completed">0</span>
+                    <div class="mini-bar"><div class="mini-bar-fill" id="bar-completed"></div></div>
+                </div>
+                <div class="breakdown-row in-progress">
+                    <span class="breakdown-icon">&#8635;</span>
+                    <span class="breakdown-label">In Progress</span>
+                    <span class="breakdown-count" id="count-in-progress">0</span>
+                    <div class="mini-bar"><div class="mini-bar-fill" id="bar-in-progress"></div></div>
+                </div>
+                <div class="breakdown-row queued">
+                    <span class="breakdown-icon">&#8987;</span>
+                    <span class="breakdown-label">Queued</span>
+                    <span class="breakdown-count" id="count-queued">0</span>
+                    <div class="mini-bar"><div class="mini-bar-fill" id="bar-queued"></div></div>
+                </div>
+                <div class="breakdown-row skipped">
+                    <span class="breakdown-icon">&#8856;</span>
+                    <span class="breakdown-label">Skipped</span>
+                    <span class="breakdown-count" id="count-skipped">0</span>
+                    <div class="mini-bar"><div class="mini-bar-fill" id="bar-skipped"></div></div>
+                </div>
+                <div class="breakdown-row failed">
+                    <span class="breakdown-icon">&#10007;</span>
+                    <span class="breakdown-label">Failed/Revoked</span>
+                    <span class="breakdown-count" id="count-failed">0</span>
+                    <div class="mini-bar"><div class="mini-bar-fill" id="bar-failed"></div></div>
+                </div>
+            </div>
+
+            <div class="task-meta">
+                <p><span class="meta-label">Running Time:</span> <span id="status-running-time">--:--:--</span></p>
+                <p><span class="meta-label">Task ID:</span> <span id="status-task-id" class="task-id-text">N/A</span></p>
+                <p><span class="meta-label">Status:</span> <span id="status-log">N/A</span></p>
+            </div>
+
+            <details class="log-details">
+                <summary>Details / Log</summary>
                 <pre id="status-details"></pre>
-            </div>
+            </details>
         </div>
     </section>
 

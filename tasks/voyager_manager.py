@@ -700,6 +700,39 @@ def _parse_mood_features(other_features_str: str) -> dict:
         logger.warning(f"Error parsing mood features '{other_features_str}': {e}")
         return {}
 
+
+def _filter_by_min_rating(song_results: list, min_rating: float, db_conn) -> list:
+    """
+    Filters songs by minimum rating threshold.
+    Keeps only songs with rating >= min_rating.
+    Songs without a rating are excluded when min_rating is specified.
+    """
+    if not song_results or min_rating is None:
+        return song_results
+
+    # Get ratings for all candidate songs
+    candidate_ids = [s['item_id'] for s in song_results]
+
+    with db_conn.cursor(cursor_factory=DictCursor) as cur:
+        cur.execute("SELECT item_id, rating FROM score WHERE item_id = ANY(%s)", (candidate_ids,))
+        rows = cur.fetchall()
+
+    # Build rating map
+    rating_map = {row['item_id']: row['rating'] for row in rows}
+
+    # Filter songs that meet the minimum rating
+    filtered_songs = []
+    for song in song_results:
+        rating = rating_map.get(song['item_id'])
+        if rating is not None and rating >= min_rating:
+            song_copy = song.copy()
+            song_copy['rating'] = rating
+            filtered_songs.append(song_copy)
+
+    logger.info(f"Rating filter: {len(song_results)} -> {len(filtered_songs)} songs (min_rating={min_rating})")
+    return filtered_songs
+
+
 # --- START: RADIUS SIMILARITY RE-IMPLEMENTATION ---
 
 def _radius_walk_get_candidates(
@@ -1232,11 +1265,12 @@ def _execute_radius_walk(
 # --- END: RADIUS SIMILARITY RE-IMPLEMENTATION ---
 
 
-def find_nearest_neighbors_by_id(target_item_id: str, n: int = 10, eliminate_duplicates: bool | None = None, mood_similarity: bool | None = None, radius_similarity: bool | None = None):
+def find_nearest_neighbors_by_id(target_item_id: str, n: int = 10, eliminate_duplicates: bool | None = None, mood_similarity: bool | None = None, radius_similarity: bool | None = None, min_rating: float | None = None):
     """
     Finds the N nearest neighbors for a given item_id using the globally cached Voyager index.
     If mood_similarity is True, filters results by mood feature similarity (danceability, aggressive, happy, party, relaxed, sad).
     If radius_similarity is True, re-orders results based on the 70/30 weighted score.
+    If min_rating is provided, filters out tracks with a rating below this threshold (0-5 scale).
     """
     if voyager_index is None or id_map is None or reverse_id_map is None:
         raise RuntimeError("Voyager index is not loaded in memory. It may be missing, empty, or the server failed to load it on startup.")
@@ -1349,8 +1383,11 @@ def find_nearest_neighbors_by_id(target_item_id: str, n: int = 10, eliminate_dup
             eliminate_duplicates=eliminate_duplicates
         )
         
-        # 3. Return the results. They are already in the correct "walk" order.
-        # No further filtering or sorting is needed.
+        # 3. Apply rating filter if specified
+        if min_rating is not None:
+            final_results = _filter_by_min_rating(final_results, min_rating, db_conn)
+
+        # 4. Return the results. They are already in the correct "walk" order.
         return final_results
 
     # --- Standard Logic (No Radius) ---
@@ -1398,7 +1435,11 @@ def find_nearest_neighbors_by_id(target_item_id: str, n: int = 10, eliminate_dup
         else:
             final_results = unique_results_by_song
 
-        # 6. Return the top N results, sorted by original distance
+        # 6. Apply rating filter if specified
+        if min_rating is not None:
+            final_results = _filter_by_min_rating(final_results, min_rating, db_conn)
+
+        # 7. Return the top N results, sorted by original distance
         return final_results[:n]
 
 def find_nearest_neighbors_by_vector(query_vector: np.ndarray, n: int = 100, eliminate_duplicates: bool | None = None):
@@ -1675,6 +1716,62 @@ def create_playlist_from_ids(playlist_name: str, track_ids: list, user_creds: di
 
     except Exception as e:
         raise e
+
+def async_rebuild_all_indexes():
+    """
+    Rebuilds all indexes asynchronously (Voyager, artist similarity, map projections).
+    This function is designed to be called as an RQ job for non-blocking index rebuilds.
+    """
+    from app_helper import get_db, build_and_store_map_projection, build_and_store_artist_projection
+    from .artist_gmm_manager import build_and_store_artist_index
+    import redis
+
+    logger.info("Starting async rebuild of all indexes...")
+
+    try:
+        db_conn = get_db()
+
+        # 1. Rebuild Voyager index (main song embeddings)
+        logger.info("Async rebuild: Building Voyager index...")
+        build_and_store_voyager_index(db_conn)
+
+        # 2. Rebuild artist similarity index
+        try:
+            logger.info("Async rebuild: Building artist similarity index...")
+            build_and_store_artist_index(db_conn)
+        except Exception as e:
+            logger.warning(f"Async rebuild: Failed to build artist similarity index: {e}")
+
+        # 3. Rebuild song map projection
+        try:
+            logger.info("Async rebuild: Building song map projection...")
+            build_and_store_map_projection('main_map')
+        except Exception as e:
+            logger.warning(f"Async rebuild: Failed to build map projection: {e}")
+
+        # 4. Rebuild artist component projection
+        try:
+            logger.info("Async rebuild: Building artist component projection...")
+            build_and_store_artist_projection('artist_map')
+        except Exception as e:
+            logger.warning(f"Async rebuild: Failed to build artist projection: {e}")
+
+        # 5. Publish reload message to Flask container
+        try:
+            from config import REDIS_URL
+            redis_conn = redis.from_url(REDIS_URL)
+            redis_conn.publish('index-updates', 'reload')
+            logger.info("Async rebuild: Published reload message to Flask container.")
+        except Exception as e:
+            logger.warning(f"Async rebuild: Could not publish reload message: {e}")
+
+        logger.info("Async rebuild of all indexes completed successfully.")
+        return {"status": "SUCCESS", "message": "All indexes rebuilt"}
+
+    except Exception as e:
+        logger.error(f"Async rebuild failed: {e}", exc_info=True)
+        return {"status": "FAILURE", "error": str(e)}
+
 
 def cleanup_resources():
     """

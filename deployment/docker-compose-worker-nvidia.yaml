@@ -10,6 +10,7 @@ services:
   audiomuse-ai-worker:
     image: ghcr.io/neptunehub/audiomuse-ai:latest-nvidia
     container_name: audiomuse-ai-worker-instance
+    shm_size: '4gb'  # Required for multiprocessing temp file approach
     ports:
       - "8029:8000"  # Expose worker API
     environment:
@@ -31,9 +32,24 @@ services:
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
       TEMP_DIR: "/app/temp_audio"
+      MUSIC_LIBRARIES: "${MUSIC_LIBRARIES:-}"
       NVIDIA_VISIBLE_DEVICES: "0"
       NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
       USE_GPU_CLUSTERING: "${USE_GPU_CLUSTERING:-true}"
+      # Multi-Server Playlist Sync
+      PLAYLIST_PRIMARY_SERVER: "${PLAYLIST_PRIMARY_SERVER:-}"
+      PLAYLIST_SECONDARY_SERVERS: "${PLAYLIST_SECONDARY_SERVERS:-}"
+      PLAYLIST_SYNC_ENABLED: "${PLAYLIST_SYNC_ENABLED:-true}"
+      # Secondary server credentials (for sync)
+      PLEX_URL: "${PLEX_URL:-}"
+      PLEX_TOKEN: "${PLEX_TOKEN:-}"
+      EMBY_URL: "${EMBY_URL:-}"
+      EMBY_USER_ID: "${EMBY_USER_ID:-}"
+      EMBY_TOKEN: "${EMBY_TOKEN:-}"
+      NAVIDROME_URL: "${NAVIDROME_URL:-}"
+      NAVIDROME_USER: "${NAVIDROME_USER:-}"
+      NAVIDROME_PASSWORD: "${NAVIDROME_PASSWORD:-}"
+      LYRION_URL: "${LYRION_URL:-}"
     volumes:
       - temp-audio-worker:/app/temp_audio
     restart: unless-stopped

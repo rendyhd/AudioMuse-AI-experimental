@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(docker logs:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(powershell -Command \"Get-EventLog -LogName System -EntryType Error -Newest 20 | Select-Object TimeGenerated, Source, Message | Format-List\")",
+      "Bash(powershell:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker stats:*)",
+      "Bash(gemini:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(docker info:*)"
     ],
     "deny": [],
     "ask": []

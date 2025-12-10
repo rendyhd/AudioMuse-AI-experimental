@@ -3,6 +3,9 @@
 import logging
 import config  # Import the config module to access server type and settings
 
+# Import playlist sync module for multi-server support
+from tasks.playlist_sync import sync_playlist_to_secondary_servers, is_sync_enabled
+
 # Import the specific implementations
 from tasks.mediaserver_jellyfin import (
     resolve_user as jellyfin_resolve_user,
@@ -72,6 +75,20 @@ from tasks.mediaserver_emby import (
     get_top_played_songs as emby_get_top_played_songs,
     get_last_played_time as emby_get_last_played_time,
 )
+from tasks.mediaserver_plex import (
+    get_all_playlists as plex_get_all_playlists,
+    delete_playlist as plex_delete_playlist,
+    get_recent_albums as plex_get_recent_albums,
+    get_recent_music_items as plex_get_recent_music_items,
+    get_tracks_from_album as plex_get_tracks_from_album,
+    download_track as plex_download_track,
+    get_all_songs as plex_get_all_songs,
+    get_playlist_by_name as plex_get_playlist_by_name,
+    create_playlist as plex_create_playlist,
+    create_instant_playlist as plex_create_instant_playlist,
+    get_top_played_songs as plex_get_top_played_songs,
+    get_last_played_time as plex_get_last_played_time,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +127,9 @@ def delete_automatic_playlists():
     elif config.MEDIASERVER_TYPE == 'emby':
         playlists_to_check = emby_get_all_playlists()
         delete_function = emby_delete_playlist
+    elif config.MEDIASERVER_TYPE == 'plex':
+        playlists_to_check = plex_get_all_playlists()
+        delete_function = plex_delete_playlist
 
     if delete_function:
         for p in playlists_to_check:
@@ -127,6 +147,7 @@ def get_recent_albums(limit):
     if config.MEDIASERVER_TYPE == 'lyrion': return lyrion_get_recent_albums(limit)
     if config.MEDIASERVER_TYPE == 'mpd': return mpd_get_recent_albums(limit)
     if config.MEDIASERVER_TYPE == 'emby': return emby_get_recent_albums(limit)
+    if config.MEDIASERVER_TYPE == 'plex': return plex_get_recent_albums(limit)
     return []
 
 def get_recent_music_items(limit):
@@ -141,8 +162,10 @@ def get_recent_music_items(limit):
         return navidrome_get_recent_music_items(limit)
     elif config.MEDIASERVER_TYPE == 'lyrion': 
         return lyrion_get_recent_music_items(limit)
-    elif config.MEDIASERVER_TYPE == 'emby': 
+    elif config.MEDIASERVER_TYPE == 'emby':
         return emby_get_recent_music_items(limit)
+    elif config.MEDIASERVER_TYPE == 'plex':
+        return plex_get_recent_music_items(limit)
     else:
         # Fallback to regular album fetching for servers without comprehensive discovery
         logger.info(f"get_recent_music_items not yet implemented for {config.MEDIASERVER_TYPE}, falling back to get_recent_albums")
@@ -155,6 +178,7 @@ def get_tracks_from_album(album_id):
     if config.MEDIASERVER_TYPE == 'lyrion': return lyrion_get_tracks_from_album(album_id)
     if config.MEDIASERVER_TYPE == 'mpd': return mpd_get_tracks_from_album(album_id)
     if config.MEDIASERVER_TYPE == 'emby': return emby_get_tracks_from_album(album_id)
+    if config.MEDIASERVER_TYPE == 'plex': return plex_get_tracks_from_album(album_id)
     return []
 
 def download_track(temp_dir, item):
@@ -164,6 +188,7 @@ def download_track(temp_dir, item):
     if config.MEDIASERVER_TYPE == 'lyrion': return lyrion_download_track(temp_dir, item)
     if config.MEDIASERVER_TYPE == 'mpd': return mpd_download_track(temp_dir, item)
     if config.MEDIASERVER_TYPE == 'emby': return emby_download_track(temp_dir, item)
+    if config.MEDIASERVER_TYPE == 'plex': return plex_download_track(temp_dir, item)
     return None
 
 def get_all_songs():
@@ -173,6 +198,7 @@ def get_all_songs():
     if config.MEDIASERVER_TYPE == 'lyrion': return lyrion_get_all_songs()
     if config.MEDIASERVER_TYPE == 'mpd': return mpd_get_all_songs()
     if config.MEDIASERVER_TYPE == 'emby': return emby_get_all_songs()
+    if config.MEDIASERVER_TYPE == 'plex': return plex_get_all_songs()
     return []
 
 def get_all_playlists():
@@ -182,6 +208,7 @@ def get_all_playlists():
     if config.MEDIASERVER_TYPE == 'lyrion': return lyrion_get_all_playlists()
     if config.MEDIASERVER_TYPE == 'mpd': return mpd_get_all_playlists()
     if config.MEDIASERVER_TYPE == 'emby': return emby_get_all_playlists()
+    if config.MEDIASERVER_TYPE == 'plex': return plex_get_all_playlists()
     return []
 
 def get_playlist_by_name(playlist_name):
@@ -192,34 +219,72 @@ def get_playlist_by_name(playlist_name):
     if config.MEDIASERVER_TYPE == 'lyrion': return lyrion_get_playlist_by_name(playlist_name)
     if config.MEDIASERVER_TYPE == 'mpd': return mpd_get_playlist_by_name(playlist_name)
     if config.MEDIASERVER_TYPE == 'emby': return emby_get_playlist_by_name(playlist_name)
+    if config.MEDIASERVER_TYPE == 'plex': return plex_get_playlist_by_name(playlist_name)
     return None
 
-def create_playlist(base_name, item_ids):
-    """Creates a playlist using admin credentials."""
+def create_playlist(base_name, item_ids, sync_enabled=True):
+    """
+    Creates a playlist using admin credentials.
+
+    Args:
+        base_name: Name of the playlist to create
+        item_ids: List of track IDs from the primary server
+        sync_enabled: If True (default), sync to secondary servers
+    """
     if not base_name: raise ValueError("Playlist name is required.")
     if not item_ids: raise ValueError("Track IDs are required.")
+
+    # Create playlist on primary server
     if config.MEDIASERVER_TYPE == 'jellyfin': jellyfin_create_playlist(base_name, item_ids)
     elif config.MEDIASERVER_TYPE == 'navidrome': navidrome_create_playlist(base_name, item_ids)
     elif config.MEDIASERVER_TYPE == 'lyrion': lyrion_create_playlist(base_name, item_ids)
     elif config.MEDIASERVER_TYPE == 'mpd': mpd_create_playlist(base_name, item_ids)
     elif config.MEDIASERVER_TYPE == 'emby': emby_create_playlist(base_name, item_ids)
+    elif config.MEDIASERVER_TYPE == 'plex': plex_create_playlist(base_name, item_ids)
 
-def create_instant_playlist(playlist_name, item_ids, user_creds=None, add_instant_suffix=True):
-    """Creates an instant playlist. Uses user_creds if provided, otherwise admin."""
+    # Sync to secondary servers if enabled
+    if sync_enabled and is_sync_enabled():
+        sync_results = sync_playlist_to_secondary_servers(base_name, item_ids, sync_enabled=True)
+        if sync_results:
+            logger.info(f"Playlist sync results for '{base_name}': {sync_results}")
+
+def create_instant_playlist(playlist_name, item_ids, user_creds=None, add_instant_suffix=True, sync_enabled=True):
+    """
+    Creates an instant playlist. Uses user_creds if provided, otherwise admin.
+
+    Args:
+        playlist_name: Name of the playlist to create
+        item_ids: List of track IDs from the primary server
+        user_creds: Optional user credentials for user-specific playlist
+        add_instant_suffix: If True, appends '_instant' to playlist name
+        sync_enabled: If True (default), sync to secondary servers
+    """
     if not playlist_name: raise ValueError("Playlist name is required.")
     if not item_ids: raise ValueError("Track IDs are required.")
 
+    result = None
     if config.MEDIASERVER_TYPE == 'jellyfin':
-        return jellyfin_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
-    if config.MEDIASERVER_TYPE == 'navidrome':
-        return navidrome_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
-    if config.MEDIASERVER_TYPE == 'lyrion':
-        return lyrion_create_instant_playlist(playlist_name, item_ids, add_instant_suffix)
-    if config.MEDIASERVER_TYPE == 'mpd':
-        return mpd_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
-    if config.MEDIASERVER_TYPE == 'emby':
-        return emby_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
-    return None
+        result = jellyfin_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
+    elif config.MEDIASERVER_TYPE == 'navidrome':
+        result = navidrome_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
+    elif config.MEDIASERVER_TYPE == 'lyrion':
+        result = lyrion_create_instant_playlist(playlist_name, item_ids, add_instant_suffix)
+    elif config.MEDIASERVER_TYPE == 'mpd':
+        result = mpd_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
+    elif config.MEDIASERVER_TYPE == 'emby':
+        result = emby_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
+    elif config.MEDIASERVER_TYPE == 'plex':
+        result = plex_create_instant_playlist(playlist_name, item_ids, user_creds, add_instant_suffix)
+
+    # Sync to secondary servers if enabled
+    if sync_enabled and is_sync_enabled():
+        # Use the actual playlist name (with suffix if added)
+        actual_name = f"{playlist_name}_instant" if add_instant_suffix else playlist_name
+        sync_results = sync_playlist_to_secondary_servers(actual_name, item_ids, sync_enabled=True)
+        if sync_results:
+            logger.info(f"Playlist sync results for '{actual_name}': {sync_results}")
+
+    return result
 
 def get_top_played_songs(limit, user_creds=None):
     """Fetches top played songs. Uses user_creds if provided, otherwise admin."""
@@ -233,6 +298,8 @@ def get_top_played_songs(limit, user_creds=None):
         return mpd_get_top_played_songs(limit, user_creds)
     if config.MEDIASERVER_TYPE == 'emby':
         return emby_get_top_played_songs(limit, user_creds)
+    if config.MEDIASERVER_TYPE == 'plex':
+        return plex_get_top_played_songs(limit, user_creds)
     return []
 
 def get_last_played_time(item_id, user_creds=None):
@@ -247,5 +314,7 @@ def get_last_played_time(item_id, user_creds=None):
         return mpd_get_last_played_time(item_id, user_creds)
     if config.MEDIASERVER_TYPE == 'emby':
         return emby_get_last_played_time(item_id, user_creds)
+    if config.MEDIASERVER_TYPE == 'plex':
+        return plex_get_last_played_time(item_id, user_creds)
     return None
 
